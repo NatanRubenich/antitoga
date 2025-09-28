@@ -1,0 +1,141 @@
+2025-09-27 21:09:22 | INFO     | main:startup_event:53 - Iniciando Antitoga - Automação de Notas v1.0.0
+2025-09-27 21:09:22 | INFO     | main:startup_event:60 - Aplicação iniciada com sucesso
+2025-09-27 21:11:01 | INFO     | app.automation.selenium_driver:setup_driver:49 - Driver do Chrome configurado com sucesso
+2025-09-27 21:11:01 | INFO     | app.automation.sgn_automation:start_automation:21 - Automação iniciada com sucesso
+2025-09-27 21:11:01 | INFO     | app.automation.sgn_automation:login:38 - Iniciando processo de login
+2025-09-27 21:11:02 | ERROR    | app.automation.selenium_driver:navigate_to:72 - Erro ao navegar para https://sgn.unifei.edu.br/login: Message: unknown error: net::ERR_NAME_NOT_RESOLVED
+  (Session info: chrome=140.0.7339.208)
+Stacktrace:
+	GetHandleVerifier [0x0x80c333+65459]
+	GetHandleVerifier [0x0x80c374+65524]
+	(No symbol) [0x0x62d973]
+	(No symbol) [0x0x62afe4]
+	(No symbol) [0x0x61e3e2]
+	(No symbol) [0x0x61fe55]
+	(No symbol) [0x0x61e678]
+	(No symbol) [0x0x61e1ac]
+	(No symbol) [0x0x61deba]
+	(No symbol) [0x0x61bdc0]
+	(No symbol) [0x0x61c76b]
+	(No symbol) [0x0x6314ee]
+	(No symbol) [0x0x6bc207]
+	(No symbol) [0x0x699dfc]
+	(No symbol) [0x0x6bb606]
+	(No symbol) [0x0x699bf6]
+	(No symbol) [0x0x66b38e]
+	(No symbol) [0x0x66c274]
+	GetHandleVerifier [0x0xa8eda3+2697763]
+	GetHandleVerifier [0x0xa89ec7+2677575]
+	GetHandleVerifier [0x0x834194+228884]
+	GetHandleVerifier [0x0x8249f8+165496]
+	GetHandleVerifier [0x0x82b18d+192013]
+	GetHandleVerifier [0x0x8147d8+99416]
+	GetHandleVerifier [0x0x814972+99826]
+	GetHandleVerifier [0x0x7febea+10346]
+	BaseThreadInitThunk [0x0x7612fcc9+25]
+	RtlGetAppContainerNamedObjectPath [0x0x778482ae+286]
+	RtlGetAppContainerNamedObjectPath [0x0x7784827e+238]
+
+2025-09-27 21:11:04 | ERROR    | app.automation.sgn_automation:login:80 - Erro durante login: Message: unknown error: net::ERR_NAME_NOT_RESOLVED
+  (Session info: chrome=140.0.7339.208)
+Stacktrace:
+	GetHandleVerifier [0x0x80c333+65459]
+	GetHandleVerifier [0x0x80c374+65524]
+	(No symbol) [0x0x62d973]
+	(No symbol) [0x0x62afe4]
+	(No symbol) [0x0x61e3e2]
+	(No symbol) [0x0x61fe55]
+	(No symbol) [0x0x61e678]
+	(No symbol) [0x0x61e1ac]
+	(No symbol) [0x0x61deba]
+	(No symbol) [0x0x61bdc0]
+	(No symbol) [0x0x61c76b]
+	(No symbol) [0x0x6314ee]
+	(No symbol) [0x0x6bc207]
+	(No symbol) [0x0x699dfc]
+	(No symbol) [0x0x6bb606]
+	(No symbol) [0x0x699bf6]
+	(No symbol) [0x0x66b38e]
+	(No symbol) [0x0x66c274]
+	GetHandleVerifier [0x0xa8eda3+2697763]
+	GetHandleVerifier [0x0xa89ec7+2677575]
+	GetHandleVerifier [0x0x834194+228884]
+	GetHandleVerifier [0x0x8249f8+165496]
+	GetHandleVerifier [0x0x82b18d+192013]
+	GetHandleVerifier [0x0x8147d8+99416]
+	GetHandleVerifier [0x0x814972+99826]
+	GetHandleVerifier [0x0x7febea+10346]
+	BaseThreadInitThunk [0x0x7612fcc9+25]
+	RtlGetAppContainerNamedObjectPath [0x0x778482ae+286]
+	RtlGetAppContainerNamedObjectPath [0x0x7784827e+238]
+
+2025-09-27 21:11:06 | INFO     | app.automation.selenium_driver:close_driver:61 - Driver fechado com sucesso
+2025-09-27 21:11:06 | INFO     | app.automation.sgn_automation:stop_automation:31 - Automação finalizada
+2025-09-27 21:13:28 | INFO     | main:shutdown_event:66 - Encerrando aplicação...
+2025-09-27 21:13:31 | INFO     | main:startup_event:53 - Iniciando Antitoga - Automação de Notas v1.0.0
+2025-09-27 21:13:31 | INFO     | main:startup_event:60 - Aplicação iniciada com sucesso
+2025-09-27 21:13:47 | INFO     | main:shutdown_event:66 - Encerrando aplicação...
+2025-09-27 21:13:49 | INFO     | main:startup_event:53 - Iniciando Antitoga - Automação de Notas v1.0.0
+2025-09-27 21:13:49 | INFO     | main:startup_event:60 - Aplicação iniciada com sucesso
+2025-09-27 21:14:03 | INFO     | main:startup_event:53 - Iniciando Antitoga - Automação de Notas v1.0.0
+2025-09-27 21:14:03 | INFO     | main:startup_event:60 - Aplicação iniciada com sucesso
+2025-09-27 21:14:24 | INFO     | app.automation.selenium_driver:setup_driver:49 - Driver do Chrome configurado com sucesso
+2025-09-27 21:14:24 | INFO     | app.automation.sgn_automation:start_automation:21 - Automação iniciada com sucesso
+2025-09-27 21:14:24 | INFO     | app.automation.sgn_automation:login:38 - Iniciando processo de login
+2025-09-27 21:14:24 | INFO     | app.automation.selenium_driver:navigate_to:69 - Navegando para: https://idp.fiesc.com.br/authenticationendpoint/login.do
+2025-09-27 21:14:27 | INFO     | app.automation.selenium_driver:wait_for_page_load:123 - Página carregada completamente
+2025-09-27 21:14:58 | ERROR    | app.automation.selenium_driver:find_element_safe:83 - Elemento não encontrado: id=username. Erro: Message: 
+Stacktrace:
+	GetHandleVerifier [0x0x80c333+65459]
+	GetHandleVerifier [0x0x80c374+65524]
+	(No symbol) [0x0x62d973]
+	(No symbol) [0x0x6776e7]
+	(No symbol) [0x0x677a8b]
+	(No symbol) [0x0x6bdea2]
+	(No symbol) [0x0x699e44]
+	(No symbol) [0x0x6bb606]
+	(No symbol) [0x0x699bf6]
+	(No symbol) [0x0x66b38e]
+	(No symbol) [0x0x66c274]
+	GetHandleVerifier [0x0xa8eda3+2697763]
+	GetHandleVerifier [0x0xa89ec7+2677575]
+	GetHandleVerifier [0x0x834194+228884]
+	GetHandleVerifier [0x0x8249f8+165496]
+	GetHandleVerifier [0x0x82b18d+192013]
+	GetHandleVerifier [0x0x8147d8+99416]
+	GetHandleVerifier [0x0x814972+99826]
+	GetHandleVerifier [0x0x7febea+10346]
+	BaseThreadInitThunk [0x0x7612fcc9+25]
+	RtlGetAppContainerNamedObjectPath [0x0x778482ae+286]
+	RtlGetAppContainerNamedObjectPath [0x0x7784827e+238]
+
+2025-09-27 21:15:29 | ERROR    | app.automation.selenium_driver:find_element_safe:83 - Elemento não encontrado: id=password. Erro: Message: 
+Stacktrace:
+	GetHandleVerifier [0x0x80c333+65459]
+	GetHandleVerifier [0x0x80c374+65524]
+	(No symbol) [0x0x62d973]
+	(No symbol) [0x0x6776e7]
+	(No symbol) [0x0x677a8b]
+	(No symbol) [0x0x6bdea2]
+	(No symbol) [0x0x699e44]
+	(No symbol) [0x0x6bb606]
+	(No symbol) [0x0x699bf6]
+	(No symbol) [0x0x66b38e]
+	(No symbol) [0x0x66c274]
+	GetHandleVerifier [0x0xa8eda3+2697763]
+	GetHandleVerifier [0x0xa89ec7+2677575]
+	GetHandleVerifier [0x0x834194+228884]
+	GetHandleVerifier [0x0x8249f8+165496]
+	GetHandleVerifier [0x0x82b18d+192013]
+	GetHandleVerifier [0x0x8147d8+99416]
+	GetHandleVerifier [0x0x814972+99826]
+	GetHandleVerifier [0x0x7febea+10346]
+	BaseThreadInitThunk [0x0x7612fcc9+25]
+	RtlGetAppContainerNamedObjectPath [0x0x778482ae+286]
+	RtlGetAppContainerNamedObjectPath [0x0x7784827e+238]
+
+2025-09-27 21:15:29 | ERROR    | app.automation.sgn_automation:login:53 - Erro ao preencher credenciais
+2025-09-27 21:15:31 | INFO     | app.automation.selenium_driver:close_driver:61 - Driver fechado com sucesso
+2025-09-27 21:15:33 | INFO     | app.automation.sgn_automation:stop_automation:31 - Automação finalizada
+2025-09-27 21:16:51 | INFO     | main:shutdown_event:66 - Encerrando aplicação...
+2025-09-27 21:17:38 | INFO     | main:shutdown_event:66 - Encerrando aplicação...
