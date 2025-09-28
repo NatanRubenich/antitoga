@@ -38,9 +38,10 @@ class SeleniumManager:
         
         Este método:
         1. Define as opções do Chrome para melhor performance e compatibilidade
-        2. Usa o WebDriverManager para baixar automaticamente o ChromeDriver
-        3. Cria a instância do WebDriver com as configurações
-        4. Define timeout implícito para encontrar elementos
+        2. Desabilita notificações e permissões indesejadas
+        3. Usa o WebDriverManager para baixar automaticamente o ChromeDriver
+        4. Cria a instância do WebDriver com as configurações
+        5. Define timeout implícito para encontrar elementos
         
         Returns:
             webdriver.Chrome: Instância configurada do driver do Chrome
@@ -50,8 +51,29 @@ class SeleniumManager:
         """
         # Configurações do Chrome para melhor performance e compatibilidade
         chrome_options = Options()
-        chrome_options.add_argument("--no-sandbox")  # Necessário em alguns ambientes
-        chrome_options.add_argument("--disable-dev-shm-usage")  # Evita problemas de memória
+        
+        # Configurações para melhor performance e compatibilidade
+        chrome_options.add_argument("--start-maximized")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        
+        # Desabilitar notificações de localização e outras permissões
+        chrome_options.add_argument("--disable-notifications")
+        chrome_options.add_argument("--disable-geolocation")
+        chrome_options.add_argument("--disable-infobars")
+        chrome_options.add_argument("--disable-popup-blocking")
+        
+        # Configurar preferências para desabilitar notificações de localização
+        prefs = {
+            "profile.default_content_setting_values.notifications": 2,  # 0=Solicitar, 1=Permitir, 2=Não permitir
+            "profile.default_content_setting_values.geolocation": 2,   # Desabilitar localização
+            "profile.managed_default_content_settings.images": 1,      # Carregar imagens
+            "credentials_enable_service": False,                       # Desabilitar gerenciador de senhas
+            "profile.password_manager_enabled": False,                 # Desabilitar gerenciador de senhas
+        }
+        chrome_options.add_experimental_option("prefs", prefs)  # Evita problemas de memória
         chrome_options.add_argument("--window-size=1920,1080")  # Define tamanho da janela
         # chrome_options.add_argument("--headless")  # Descomente para modo headless (sem interface)
         

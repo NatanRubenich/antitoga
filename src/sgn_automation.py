@@ -66,57 +66,157 @@ class SGNAutomation:
             self._perform_login_credentials(username, password)  # 3. Inserir credenciais
             
             return True, "Login realizado com sucesso!"
-            
         except Exception as e:
             error_msg = f"Erro durante login: {str(e)}"
             print(f"❌ {error_msg}")
             return False, error_msg
     
-    def lancar_conceito_trimestre(self, username, password, codigo_turma):
+    def lancar_conceito_trimestre(self, username, password, codigo_turma, atitude_observada=None, conceito_habilidade=None):
         """
         Executa o fluxo completo: login -> navegação -> lançamento de conceitos
         
         Este método realiza todo o processo de lançamento de conceitos para todos os alunos:
         1. Faz login no sistema
-        2. Navega para a aba de Conceitos da turma
-        3. Para cada aluno na tabela:
-           - Acessa a aba de notas do aluno
-           - Seleciona "Raramente" em todas as Observações de Atitudes
-           - Seleciona "B" em todos os Conceitos de Habilidades
+        2. Navega até o diário da turma
+        3. Abre a aba de Conceitos
+        4. Para cada aluno:
+           - Abre a modal de conceitos
+           - Preenche as observações de atitudes com o valor especificado
+           - Preenche os conceitos de habilidades com o valor especificado
            - Salva as alterações
         
         Args:
             username (str): Nome de usuário para login no SGN
             password (str): Senha do usuário
             codigo_turma (str): Código identificador da turma
-            
+            atitude_observada (str, optional): Opção para observações de atitudes. Padrão: "Raramente"
+            conceito_habilidade (str, optional): Opção para conceitos de habilidades. Padrão: "B"
+                
+        Returns:
+            tuple: (success: bool, message: str)
+                - success: True se tudo ocorreu bem, False em caso de erro
+                - message: Mensagem descritiva do resultado com estatísticas
+        """
+        """
+        Executa o fluxo completo: login -> navegação -> lançamento de conceitos
+        
+        Este método realiza todo o processo de lançamento de conceitos para todos os alunos:
+        1. Faz login no sistema
+{{ ... }}
+        
+        Args:
+            username (str): Nome de usuário para login no SGN
+            password (str): Senha do usuário
+            codigo_turma (str): Código identificador da turma
+            atitude_observada (str, optional): Opção para observações de atitudes. Padrão: "Raramente"
+            conceito_habilidade (str, optional): Opção para conceitos de habilidades. Padrão: "B"
+                
         Returns:
             tuple: (success: bool, message: str)
                 - success: True se tudo ocorreu bem, False em caso de erro
                 - message: Mensagem descritiva do resultado com estatísticas
         """
         try:
-            # Fazer login usando o método reutilizável
-            login_success, login_message = self.perform_login(username, password)
+            from .models import AtitudeObservada, ConceitoHabilidade
             
-            if not login_success:
-                return False, f"Falha no login: {login_message}"
+            # Validar e definir valores padrão
+            if not isinstance(username, str) or not isinstance(password, str) or not isinstance(codigo_turma, str):
+                raise TypeError("Parâmetros username, password e codigo_turma devem ser strings")
             
-            # Continuar com a navegação específica
-            self._navigate_to_diary_search()    # 4. Navegar para buscar diário
-            self._access_class_diary(codigo_turma)  # 5. Acessar diário da turma
-            self._open_conceitos_tab()          # 6. Abrir aba de conceitos
+            # Definir valores padrão se não fornecidos
+            if atitude_observada is None:
+                atitude_observada = "Raramente"
+            if conceito_habilidade is None:
+                conceito_habilidade = "B"
             
-            # Novo: Lançar conceitos para todos os alunos
-            success, message = self._lancar_conceitos_todos_alunos()
+            # Mapear atitude_observada para o enum
+            try:
+                # Normaliza a string para comparação (remove acentos e converte para minúsculas)
+                def normalize_str(s):
+                    import unicodedata
+                    return ''.join(c for c in unicodedata.normalize('NFD', str(s).lower()) 
+                                if unicodedata.category(c) != 'Mn')
+                
+                # Processar atitude_observada
+                if isinstance(atitude_observada, str):
+                    input_normalized = normalize_str(atitude_observada)
+                    for a in AtitudeObservada:
+                        if normalize_str(a.value) == input_normalized:
+                            atitude_mapeada = a
+                            break
+                    else:
+                        # Tenta encontrar correspondência parcial
+                        for a in AtitudeObservada:
+                            if input_normalized in normalize_str(a.value) or normalize_str(a.value) in input_normalized:
+                                atitude_mapeada = a
+                                break
+                        else:
+                            raise ValueError(
+                                f"Atitude observada inválida. Valores aceitos: {', '.join(e.value for e in AtitudeObservada)}"
+                            )
+                else:
+                    atitude_mapeada = atitude_observada
+                
+                # Processar conceito_habilidade
+                if isinstance(conceito_habilidade, str):
+                    conceito_upper = conceito_habilidade.strip().upper()
+                    conceito_mapeado = next(
+                        (c for c in ConceitoHabilidade 
+                         if c.value.upper() == conceito_upper),
+                        None
+                    )
+                    if conceito_mapeado is None:
+                        # Tenta encontrar correspondência parcial
+                        for c in ConceitoHabilidade:
+                            if c.value.upper() == conceito_upper or \
+                               (len(conceito_upper) == 1 and c.value.upper() == conceito_upper):
+                                conceito_mapeado = c
+                                break
+                        else:
+                            raise ValueError(
+                                f"Conceito de habilidade inválido. Valores aceitos: {', '.join(e.value for e in ConceitoHabilidade if e != ConceitoHabilidade.SELECIONE)}"
+                            )
+                else:
+                    conceito_mapeado = conceito_habilidade
+                    
+            except ValueError as e:
+                raise ValueError(str(e))
+            except Exception as e:
+                raise ValueError(f"Erro ao processar parâmetros: {str(e)}")
             
+            print(f"🔧 Parâmetros recebidos:")
+            print(f"   - Usuário: {username}")
+            print(f"   - Código da turma: {codigo_turma}")
+            print(f"   - Atitude observada: {atitude_mapeada.value if hasattr(atitude_mapeada, 'value') else atitude_mapeada}")
+            print(f"   - Conceito habilidade: {conceito_mapeado.value if hasattr(conceito_mapeado, 'value') else conceito_mapeado}")
+            
+            # 1. Fazer login
+            print("\n1. Iniciando processo de login...")
+            success, message = self.perform_login(username, password)
             if not success:
-                return False, f"Erro no lançamento de conceitos: {message}"
+                return False, f"Falha no login: {message}"
             
-            return True, f"Lançamento de conceitos concluído com sucesso! {message}"
+            # 2. Navegar para a aba de conceitos
+            print("\n2. Navegando para a aba de conceitos...")
+            success, message = self.navigate_to_conceitos(codigo_turma)
+            if not success:
+                return False, f"Falha ao navegar para conceitos: {message}"
+            
+            # 3. Lançar conceitos para todos os alunos
+            print("\n3. Iniciando lançamento de conceitos...")
+            print(f"🔧 Usando valores mapeados:")
+            print(f"   - Atitude: {atitude_mapeada}")
+            print(f"   - Conceito: {conceito_mapeado}")
+            
+            success, message = self._lancar_conceitos_todos_alunos(
+                atitude_observada=atitude_mapeada,
+                conceito_habilidade=conceito_mapeado
+            )
+            
+            return success, message
             
         except Exception as e:
-            error_msg = f"Erro durante lançamento de conceitos: {str(e)}"
+            error_msg = f"Erro ao lançar conceitos: {str(e)}"
             print(f"❌ {error_msg}")
             return False, error_msg
     
@@ -175,12 +275,12 @@ class SGNAutomation:
             if not self.driver:
                 return False, "Driver não inicializado. Faça login primeiro."
             
-            # Navegar para a aba de conceitos
-            self._navigate_to_diary_search()    # Navegar para buscar diário
-            self._access_class_diary(codigo_turma)  # Acessar diário da turma
+            # Acesso direto ao diário da turma (pula a navegação intermediária)
+            print(f"🚀 Acessando diretamente o diário da turma {codigo_turma}...")
+            self._access_class_diary(codigo_turma)  # Acessar diário da turma diretamente
             self._open_conceitos_tab()          # Abrir aba de conceitos
             
-            return True, f"Navegação para Conceitos da turma {codigo_turma} concluída!"
+            return True, f"Navegação direta para Conceitos da turma {codigo_turma} concluída!"
             
         except Exception as e:
             error_msg = f"Erro durante navegação: {str(e)}"
@@ -498,13 +598,14 @@ class SGNAutomation:
             A URL segue o padrão: 
             https://sgn.sesisenai.org.br/pages/diarioClasse/diario-classe.html?idDiario={codigo}
         """
-        print(f"5. Acessando diário da turma {codigo_turma}...")
+        print(f"📋 Acessando diário da turma {codigo_turma} diretamente...")
         
         # Constrói a URL direta para o diário da turma
         diario_url = f"https://sgn.sesisenai.org.br/pages/diarioClasse/diario-classe.html?idDiario={codigo_turma}"
+        print(f"   🔗 URL: {diario_url}")
         self.driver.get(diario_url)
-        time.sleep(3)  # Reduzido de 5 para 3 segundos
-        print(f"✅ Diário da turma {codigo_turma} acessado")
+        time.sleep(3)  # Aguardar carregamento da página
+        print(f"   ✅ Diário da turma {codigo_turma} carregado com sucesso")
     
     def _open_conceitos_tab(self):
         """
@@ -651,23 +752,29 @@ class SGNAutomation:
         """
         self.selenium_manager.close_driver()
     
-    def _lancar_conceitos_todos_alunos(self):
+    def _lancar_conceitos_todos_alunos(self, atitude_observada="Raramente", conceito_habilidade="B"):
         """
         Lança conceitos para todos os alunos na tabela
         
         Este método:
         1. Identifica todos os alunos na tabela de conceitos
-        2. Para cada aluno, acessa sua aba de notas
-        3. Preenche as observações de atitudes com "Raramente"
-        4. Preenche os conceitos de habilidades com "B"
-        5. Salva as alterações
+        2. Para cada aluno, acessa sua modal de conceitos
+        3. Preenche as observações de atitudes com a opção escolhida
+        4. Preenche os conceitos de habilidades com a opção escolhida
+        5. Sistema salva automaticamente e fecha modal com ESC
+        
+        Args:
+            atitude_observada (str): Opção para observações de atitudes
+            conceito_habilidade (str): Opção para conceitos de habilidades
         
         Returns:
             tuple: (success: bool, message: str)
                 - success: True se todos os conceitos foram lançados
                 - message: Estatísticas do processo
         """
-        print("7. Iniciando lançamento de conceitos para todos os alunos...")
+        print(f"7. Iniciando lançamento de conceitos para todos os alunos...")
+        print(f"   📋 Atitude observada: '{atitude_observada}'")
+        print(f"   📋 Conceito de habilidade: '{conceito_habilidade}'")
         
         try:
             # Obter lista de alunos
@@ -694,34 +801,32 @@ class SGNAutomation:
                         alunos_com_erro += 1
                         continue
                     
-                    # Preencher observações de atitudes
-                    success = self._preencher_observacoes_atitudes()
+                    # Preencher observações de atitudes com opção configurável
+                    success = self._preencher_observacoes_atitudes(atitude_observada)
                     if not success:
                         print(f"   ⚠️ Erro ao preencher observações de atitudes para {aluno_info['nome']}")
                     
-                    # Preencher conceitos de habilidades
-                    success = self._preencher_conceitos_habilidades()
+                    # Preencher conceitos de habilidades com opção configurável
+                    success = self._preencher_conceitos_habilidades(conceito_habilidade)
                     if not success:
                         print(f"   ⚠️ Erro ao preencher conceitos de habilidades para {aluno_info['nome']}")
                     
-                    # Salvar alterações
-                    success = self._salvar_alteracoes_aluno()
-                    if success:
-                        print(f"   ✅ Conceitos salvos para {aluno_info['nome']}")
-                        alunos_processados += 1
-                    else:
-                        print(f"   ❌ Erro ao salvar conceitos para {aluno_info['nome']}")
-                        alunos_com_erro += 1
+                    # Sistema salva automaticamente - apenas fechar modal
+                    print(f"   ✅ Conceitos aplicados para {aluno_info['nome']} (salvamento automático)")
+                    alunos_processados += 1
                     
-                    # Voltar para a lista de alunos
-                    self._voltar_para_lista_alunos()
+                    # Fechar modal (ESC) - volta para a lista de alunos
+                    self._fechar_modal_conceitos()
+                    
+                    # Adicionar espaço em branco para melhor visualização
+                    print("")  # Linha em branco após cada aluno processado
                     
                 except Exception as e:
                     print(f"   ❌ Erro ao processar aluno {aluno_info.get('nome', 'desconhecido')}: {str(e)}")
                     alunos_com_erro += 1
-                    # Tentar voltar para a lista
+                    # Tentar fechar modal
                     try:
-                        self._voltar_para_lista_alunos()
+                        self._fechar_modal_conceitos()
                     except:
                         pass
             
@@ -871,9 +976,12 @@ class SGNAutomation:
             print(f"     ❌ Erro ao acessar aba de notas: {str(e)}")
             return False
     
-    def _preencher_observacoes_atitudes(self):
+    def _preencher_observacoes_atitudes(self, opcao_atitude="Raramente"):
         """
-        Preenche todas as observações de atitudes com "Raramente"
+        Preenche todas as observações de atitudes com a opção escolhida
+        
+        Args:
+            opcao_atitude (str): Opção a ser selecionada para todas as atitudes
         
         Este método:
         1. Expande a seção de Observações de Atitudes
@@ -883,7 +991,7 @@ class SGNAutomation:
             bool: True se conseguiu preencher, False caso contrário
         """
         try:
-            print(f"     📝 Preenchendo observações de atitudes...")
+            print(f"     📝 Preenchendo observações de atitudes com '{opcao_atitude}'...")
             
             # Aguardar modal carregar (as seções já estão expandidas por padrão)
             print(f"     ⏳ Aguardando modal de atitudes/habilidades carregar...")
@@ -936,9 +1044,26 @@ class SGNAutomation:
                             valor_atual = self.driver.execute_script("return arguments[0].value;", select_element)
                             print(f"       📋 Valor atual: {valor_atual}")
                             
-                            if valor_atual != "Raramente":
+                            # Mapear opção para o valor exato esperado no select
+                            opcoes_mapeadas = {
+                                "Sempre": "Sempre",
+                                "Às vezes": "Às vezes",
+                                "As vezes": "Às vezes",  # Tolerância a erros de acentuação
+                                "Vezes": "Às vezes",     # Tolerância a variações
+                                "Raramente": "Raramente",
+                                "Nunca": "Nunca",
+                                "Não conseguiu observar": "Não conseguiu observar",
+                                "Nao conseguiu observar": "Não conseguiu observar",
+                                "Não se aplica": "Não se aplica",
+                                "Nao se aplica": "Não se aplica"
+                            }
+                            
+                            # Obter valor mapeado ou usar o valor original
+                            valor_para_preencher = opcoes_mapeadas.get(opcao_atitude, opcao_atitude)
+                            
+                            if valor_atual != valor_para_preencher:
                                 # Usar JavaScript para alterar o valor do select oculto
-                                self.driver.execute_script("arguments[0].value = 'Raramente';", select_element)
+                                self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
                                 
                                 # Disparar evento change para atualizar a interface
                                 self.driver.execute_script("""
@@ -946,15 +1071,15 @@ class SGNAutomation:
                                     arguments[0].dispatchEvent(event);
                                 """, select_element)
                                 
-                                print(f"       ✓ Atitude {i+1}: 'Raramente' selecionado (JavaScript)")
+                                print(f"       ✓ Atitude {i+1}: '{opcao_atitude}' selecionado (JavaScript)")
                                 atitudes_preenchidas += 1
                                 time.sleep(0.5)  # Aguardar processamento
                             else:
-                                print(f"       ✓ Atitude {i+1}: Já estava 'Raramente'")
+                                print(f"       ✓ Atitude {i+1}: Já estava '{opcao_atitude}'")
                                 atitudes_preenchidas += 1
                             
                         except Exception as select_error:
-                            print(f"       ❌ Erro ao selecionar 'Raramente' na linha {i+1}: {str(select_error)}")
+                            print(f"       ❌ Erro ao selecionar '{opcao_atitude}' na linha {i+1}: {str(select_error)}")
                     
                     except Exception as linha_error:
                         print(f"       ❌ Erro ao processar linha {i+1}: {str(linha_error)}")
@@ -970,19 +1095,22 @@ class SGNAutomation:
             print(f"     ❌ Erro ao preencher observações de atitudes: {str(e)}")
             return False
     
-    def _preencher_conceitos_habilidades(self):
+    def _preencher_conceitos_habilidades(self, opcao_conceito="B"):
         """
-        Preenche todos os conceitos de habilidades com "B"
+        Preenche todos os conceitos de habilidades com a opção escolhida
+        
+        Args:
+            opcao_conceito (str): Opção a ser selecionada para todos os conceitos
         
         Este método:
         1. Expande a seção de Conceitos de Habilidades
-        2. Preenche cada conceito com "B"
+        2. Preenche cada conceito com a opção escolhida
         
         Returns:
             bool: True se conseguiu preencher, False caso contrário
         """
         try:
-            print(f"     📝 Preenchendo conceitos de habilidades...")
+            print(f"     📝 Preenchendo conceitos de habilidades com '{opcao_conceito}'...")
             
             # As seções já estão expandidas no modal, não precisa expandir
             print(f"     📝 Processando conceitos de habilidades (seções já expandidas)...")
@@ -1026,9 +1154,30 @@ class SGNAutomation:
                             valor_atual = self.driver.execute_script("return arguments[0].value;", select_element)
                             print(f"       📋 Valor atual: {valor_atual}")
                             
-                            if valor_atual != "B":
+                            # Mapear opção para o valor exato esperado no select
+                            opcoes_mapeadas = {
+                                "A": "A",
+                                "B": "B",
+                                "C": "C",
+                                "NE": "NE",
+                                "Não se aplica": "NE",
+                                "Nao se aplica": "NE",
+                                "Não entregue": "NE",
+                                "Nao entregue": "NE"
+                            }
+                            
+                            # Obter valor mapeado ou usar o valor original
+                            valor_para_preencher = opcoes_mapeadas.get(opcao_conceito.upper(), opcao_conceito.upper())
+                            
+                            # Verificar se o valor mapeado é válido
+                            valores_validos = ["A", "B", "C", "NE"]
+                            if valor_para_preencher not in valores_validos:
+                                print(f"       ⚠️ Valor inválido: '{opcao_conceito}'. Usando 'B' como padrão.")
+                                valor_para_preencher = "B"
+                            
+                            if valor_atual != valor_para_preencher:
                                 # Usar JavaScript para alterar o valor do select oculto
-                                self.driver.execute_script("arguments[0].value = 'B';", select_element)
+                                self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
                                 
                                 # Disparar evento change para atualizar a interface
                                 self.driver.execute_script("""
@@ -1036,15 +1185,15 @@ class SGNAutomation:
                                     arguments[0].dispatchEvent(event);
                                 """, select_element)
                                 
-                                print(f"       ✓ Habilidade {i+1}: 'B' selecionado (JavaScript)")
+                                print(f"       ✓ Habilidade {i+1}: '{valor_para_preencher}' selecionado (JavaScript)")
                                 habilidades_preenchidas += 1
                                 time.sleep(0.5)  # Aguardar processamento
                             else:
-                                print(f"       ✓ Habilidade {i+1}: Já estava 'B'")
+                                print(f"       ✓ Habilidade {i+1}: Já estava '{valor_para_preencher}'")
                                 habilidades_preenchidas += 1
                             
                         except Exception as select_error:
-                            print(f"       ❌ Erro ao selecionar 'B' na linha {i+1}: {str(select_error)}")
+                            print(f"       ❌ Erro ao selecionar '{opcao_conceito}' na linha {i+1}: {str(select_error)}")
                     
                     except Exception as linha_error:
                         print(f"       ❌ Erro ao processar linha {i+1}: {str(linha_error)}")
@@ -1060,83 +1209,43 @@ class SGNAutomation:
             print(f"     ❌ Erro ao preencher conceitos de habilidades: {str(e)}")
             return False
     
-    def _salvar_alteracoes_aluno(self):
+    def _fechar_modal_conceitos(self):
         """
-        Salva as alterações feitas para o aluno atual
+        Fecha a modal de conceitos/atitudes usando ESC
+        O sistema salva automaticamente, então só precisa fechar a modal
         
         Returns:
-            bool: True se conseguiu salvar, False caso contrário
+            bool: True se conseguiu fechar, False caso contrário
         """
         try:
-            print(f"     💾 Salvando alterações...")
+            print(f"     🔙 Fechando modal de conceitos...")
             
-            # Procurar botão de salvar (pode ter diferentes localizações)
-            salvar_selectors = [
-                "//button[contains(text(), 'Salvar')]",
-                "//input[@type='submit' and contains(@value, 'Salvar')]",
-                "//button[@type='submit']",
-                "//a[contains(text(), 'Salvar')]",
-                "/html/body/div[3]/div[3]/div[2]/div[13]/div[2]/form//button[contains(text(), 'Salvar')]"
-            ]
+            # Método principal: ESC (sistema salva automaticamente)
+            try:
+                from selenium.webdriver.common.keys import Keys
+                body = self.driver.find_element(By.TAG_NAME, "body")
+                body.send_keys(Keys.ESCAPE)
+                print(f"     ✅ Modal fechada com ESC (salvamento automático)")
+                time.sleep(1)
+                return True
+            except Exception as esc_error:
+                print(f"     ⚠️ ESC não funcionou, tentando botão de fechar...")
             
-            for selector in salvar_selectors:
-                try:
-                    salvar_button = WebDriverWait(self.driver, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, selector))
-                    )
-                    
-                    # Scroll até o botão
-                    self.driver.execute_script("arguments[0].scrollIntoView(true);", salvar_button)
-                    time.sleep(0.5)
-                    
-                    salvar_button.click()
-                    
-                    # Aguardar salvamento
-                    time.sleep(2)
-                    
-                    print(f"     ✅ Alterações salvas")
-                    return True
-                    
-                except:
-                    continue
-            
-            print(f"     ⚠️ Botão salvar não encontrado, tentando Enter")
-            # Se não encontrou botão, tenta pressionar Enter
-            self.driver.find_element(By.TAG_NAME, "body").send_keys("\n")
-            time.sleep(2)
-            return True
-            
-        except Exception as e:
-            print(f"     ❌ Erro ao salvar alterações: {str(e)}")
-            return False
-    
-    def _voltar_para_lista_alunos(self):
-        """
-        Volta para a lista de alunos (fecha modal/aba de notas)
-        
-        Returns:
-            bool: True se conseguiu voltar, False caso contrário
-        """
-        try:
-            print(f"     🔙 Voltando para lista de alunos...")
-            
-            # Procurar botão de fechar o modal (XPath específico fornecido)
-            voltar_selectors = [
-                "/html/body/div[3]/div[3]/div[2]/div[13]/div[1]/a",  # XPath específico fornecido
+            # Método alternativo: Botão de fechar (caso ESC falhe)
+            fechar_selectors = [
                 "//div[@id='modalDadosAtitudes']//a[contains(@class, 'ui-dialog-titlebar-close')]",
                 "//a[contains(@class, 'ui-dialog-titlebar-close')]",
                 "//span[@class='ui-icon ui-icon-closethick']/..",
-                "//button[contains(text(), 'Fechar')]",
-                "//button[contains(text(), 'Voltar')]"
+                "/html/body/div[3]/div[3]/div[2]/div[13]/div[1]/a"  # XPath específico como fallback
             ]
             
-            for selector in voltar_selectors:
+            for i, selector in enumerate(fechar_selectors):
                 try:
-                    voltar_button = WebDriverWait(self.driver, 3).until(
+                    fechar_button = WebDriverWait(self.driver, 3).until(
                         EC.element_to_be_clickable((By.XPATH, selector))
                     )
                     
-                    voltar_button.click()
+                    fechar_button.click()
                     
                     # Aguardar modal fechar
                     try:

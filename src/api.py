@@ -11,13 +11,15 @@ A API fornece endpoints para:
 - Fechar o navegador
 - Health check e informações da API
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 from .models import (
     LoginRequest, 
     AutomationResponse, 
     LoginOnlyRequest, 
     NavigateRequest, 
-    LoginStatusResponse
+    LoginStatusResponse, 
+    AtitudeObservada, 
+    ConceitoHabilidade
 )
 from .selenium_config import SeleniumManager
 from .sgn_automation import SGNAutomation
@@ -45,23 +47,61 @@ def create_app():
     )
     
     @app.post("/lancar-conceito-trimestre", response_model=AutomationResponse)
-    async def lancar_conceito_trimestre(request: LoginRequest):
+    async def lancar_conceito_trimestre(
+        request: LoginRequest = Body(
+            ...,
+            examples={
+                "padrao": {
+                    "summary": "Padrão (Raramente/B)",
+                    "description": "Usa os padrões: Raramente para atitudes e B para conceitos",
+                    "value": {
+                        "username": "seu.usuario",
+                        "password": "sua.senha",
+                        "codigo_turma": "369528"
+                    },
+                },
+                "excelente": {
+                    "summary": "Excelente desempenho (Sempre/A)",
+                    "value": {
+                        "username": "seu.usuario",
+                        "password": "sua.senha",
+                        "codigo_turma": "369528",
+                        "atitude_observada": "Sempre",
+                        "conceito_habilidade": "A"
+                    },
+                },
+                "basico": {
+                    "summary": "Desempenho básico (Às vezes/C)",
+                    "value": {
+                        "username": "seu.usuario",
+                        "password": "sua.senha",
+                        "codigo_turma": "369528",
+                        "atitude_observada": "Às vezes",
+                        "conceito_habilidade": "C"
+                    },
+                },
+            },
+        )
+    ):
         """
         Executa login e lança conceitos para todos os alunos da turma
         
         Este endpoint realiza o fluxo completo de lançamento de conceitos:
         1. Faz login no sistema SGN usando as credenciais fornecidas
-        2. Navega para a página de diários de classe
-        3. Acessa o diário da turma especificada
-        4. Abre a aba de Conceitos
-        5. Para cada aluno na turma:
-           - Acessa a aba de notas do aluno
-           - Seleciona "Raramente" em todas as Observações de Atitudes
-           - Insere "B" em todos os Conceitos de Habilidades
-           - Salva as alterações
+        2. Navega diretamente para o diário da turma especificada
+        3. Abre a aba de Conceitos
+        4. Para cada aluno na turma:
+           - Acessa a modal de conceitos do aluno
+           - Aplica a opção escolhida em todas as Observações de Atitudes
+           - Aplica a opção escolhida em todos os Conceitos de Habilidades
+        
+        Exemplos de uso:
+        - Padrão (Raramente/B): {"username": "usuario", "password": "senha", "codigo_turma": "12345"}
+        - Excelente (Sempre/A): {"username": "usuario", "password": "senha", "codigo_turma": "12345", "atitude_observada": "Sempre", "conceito_habilidade": "A"}
+        - Básico (Às vezes/C): {"username": "usuario", "password": "senha", "codigo_turma": "12345", "atitude_observada": "Às vezes", "conceito_habilidade": "C"}
         
         Args:
-            request (LoginRequest): Dados de login e código da turma
+            request (LoginRequest): Dados de login, código da turma e opções de conceitos
             
         Returns:
             AutomationResponse: Resultado da automação com estatísticas
@@ -71,21 +111,45 @@ def create_app():
             {
                 "username": "natan.rubenich",
                 "password": "Barning123",
-                "codigo_turma": "369528"
+                "codigo_turma": "369528",
+                "atitude_observada": "Sempre",
+                "conceito_habilidade": "A"
             }
             
         Response:
-            {
                 "success": true,
                 "message": "Lançamento de conceitos concluído com sucesso! Processados: 25/25 alunos"
             }
         """
         try:
-            # Executar lançamento de conceitos usando o novo método
+            # Log da requisição recebida (sem a senha por segurança)
+            request_dict = request.dict()
+            if 'password' in request_dict:
+                request_dict['password'] = '***'  # Ofuscar senha nos logs
+            
+            print("\n" + "="*80)
+            print(" NOVA REQUISIÇÃO RECEBIDA")
+            print("-"*80)
+            print(f"Dados da requisição: {request_dict}")
+            
+            # Extrair valores dos Enums (usar None para que o método lance exceção se os valores forem inválidos)
+            atitude_val = request.atitude_observada.value if hasattr(request, 'atitude_observada') and request.atitude_observada else None
+            conceito_val = request.conceito_habilidade.value if hasattr(request, 'conceito_habilidade') and request.conceito_habilidade else None
+            
+            print(f"🔧 Parâmetros recebidos:")
+            print(f"   - Usuário: {request.username}")
+            print(f"   - Código da turma: {request.codigo_turma}")
+            print(f"   - Atitude observada: {atitude_val or 'Padrão (Raramente)'}")
+            print(f"   - Conceito habilidade: {conceito_val or 'Padrão (B)'}")
+            print("-"*80 + "\n")
+
+            # Executar lançamento de conceitos com opções configuráveis
             success, message = sgn_automation.lancar_conceito_trimestre(
                 username=request.username,
                 password=request.password,
-                codigo_turma=request.codigo_turma
+                codigo_turma=request.codigo_turma,
+                atitude_observada=atitude_val,
+                conceito_habilidade=conceito_val
             )
             
             return AutomationResponse(
