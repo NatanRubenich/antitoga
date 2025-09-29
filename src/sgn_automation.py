@@ -11,7 +11,7 @@ O módulo é dividido em métodos pequenos e específicos para facilitar
 manutenção e debugging de cada etapa do processo.
 """
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 import time
 
@@ -71,7 +71,15 @@ class SGNAutomation:
             print(f"❌ {error_msg}")
             return False, error_msg
     
-    def lancar_conceito_trimestre(self, username, password, codigo_turma, atitude_observada=None, conceito_habilidade=None):
+    def lancar_conceito_trimestre(
+        self,
+        username,
+        password,
+        codigo_turma,
+        atitude_observada=None,
+        conceito_habilidade=None,
+        trimestre_referencia="TR2",
+    ):
         """
         Executa o fluxo completo: login -> navegação -> lançamento de conceitos
         
@@ -91,6 +99,7 @@ class SGNAutomation:
             codigo_turma (str): Código identificador da turma
             atitude_observada (str, optional): Opção para observações de atitudes. Padrão: "Raramente"
             conceito_habilidade (str, optional): Opção para conceitos de habilidades. Padrão: "B"
+            trimestre_referencia (str): Trimestre de referência (TR1, TR2 ou TR3)
                 
         Returns:
             tuple: (success: bool, message: str)
@@ -128,6 +137,19 @@ class SGNAutomation:
                 atitude_observada = "Raramente"
             if conceito_habilidade is None:
                 conceito_habilidade = "B"
+            if trimestre_referencia is None:
+                trimestre_referencia = "TR2"
+
+            # Garantir que trimestre_referencia seja uma string válida (TR1/TR2/TR3)
+            if hasattr(trimestre_referencia, "value"):
+                trimestre_referencia = trimestre_referencia.value
+
+            trimestre_referencia = str(trimestre_referencia).strip().upper()
+            valid_trimestres = {"TR1", "TR2", "TR3"}
+            if trimestre_referencia not in valid_trimestres:
+                raise ValueError(
+                    f"Trimestre de referência inválido. Valores aceitos: {', '.join(sorted(valid_trimestres))}"
+                )
             
             # Mapear atitude_observada para o enum
             try:
@@ -201,7 +223,11 @@ class SGNAutomation:
             success, message = self.navigate_to_conceitos(codigo_turma)
             if not success:
                 return False, f"Falha ao navegar para conceitos: {message}"
-            
+
+            # 2.1 Validar trimestre de referência antes do lançamento
+            print("\n2.1. Validando trimestre de referência antes do lançamento...")
+            self._selecionar_trimestre_referencia(trimestre_referencia)
+
             # 3. Lançar conceitos para todos os alunos
             print("\n3. Iniciando lançamento de conceitos...")
             print(f"🔧 Usando valores mapeados:")
@@ -210,7 +236,8 @@ class SGNAutomation:
             
             success, message = self._lancar_conceitos_todos_alunos(
                 atitude_observada=atitude_mapeada,
-                conceito_habilidade=conceito_mapeado
+                conceito_habilidade=conceito_mapeado,
+                trimestre_referencia=trimestre_referencia
             )
             
             return success, message
@@ -599,13 +626,37 @@ class SGNAutomation:
             https://sgn.sesisenai.org.br/pages/diarioClasse/diario-classe.html?idDiario={codigo}
         """
         print(f"📋 Acessando diário da turma {codigo_turma} diretamente...")
-        
-        # Constrói a URL direta para o diário da turma
+
         diario_url = f"https://sgn.sesisenai.org.br/pages/diarioClasse/diario-classe.html?idDiario={codigo_turma}"
         print(f"   🔗 URL: {diario_url}")
-        self.driver.get(diario_url)
-        time.sleep(3)  # Aguardar carregamento da página
-        print(f"   ✅ Diário da turma {codigo_turma} carregado com sucesso")
+
+        max_tentativas = 3
+        for tentativa in range(1, max_tentativas + 1):
+            try:
+                print(f"   🔄 Tentativa {tentativa}/{max_tentativas} de abrir o diário...")
+                self.driver.get(diario_url)
+                time.sleep(3)  # Aguardar carregamento da página
+
+                if self._pagina_erro_diario_detectada():
+                    print("   ⚠️ Página de erro 500 detectada ao carregar o diário")
+                    if tentativa < max_tentativas:
+                        self._recuperar_de_pagina_erro()
+                        print("   ⏳ Reintentando acesso após recuperar da página de erro...")
+                        time.sleep(2)
+                        continue
+                    else:
+                        raise Exception("Página de erro 500 persistente ao acessar o diário")
+
+                print(f"   ✅ Diário da turma {codigo_turma} carregado com sucesso")
+                return
+
+            except Exception as e:
+                print(f"   ❌ Falha na tentativa {tentativa}: {e}")
+                if tentativa >= max_tentativas:
+                    raise
+                time.sleep(2)
+
+        raise Exception("Não foi possível acessar o diário após múltiplas tentativas")
     
     def _open_conceitos_tab(self):
         """
@@ -752,7 +803,221 @@ class SGNAutomation:
         """
         self.selenium_manager.close_driver()
     
-    def _lancar_conceitos_todos_alunos(self, atitude_observada="Raramente", conceito_habilidade="B"):
+    def _selecionar_trimestre_referencia(self, trimestre_referencia):
+        """
+        Seleciona o trimestre de referência na aba de conceitos.
+
+        Args:
+            trimestre_referencia (str): Valor esperado (TR1, TR2, TR3)
+        """
+        try:
+            if not trimestre_referencia:
+                return
+
+            print(f"   🔄 Ajustando trimestre de referência para '{trimestre_referencia}'...")
+
+            # Localiza o componente do PrimeFaces responsável pelo select de média
+            label_xpath = "//label[@id='tabViewDiarioClasse:formAbaConceitos:mediasConceito_label']"
+            dropdown_trigger = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, label_xpath))
+            )
+
+            # Se o valor atual já for o desejado, não faz nada
+            valor_atual = dropdown_trigger.text.strip().upper()
+            if valor_atual == trimestre_referencia.upper():
+                print("   ✅ Trimestre desejado já está selecionado")
+                print(f"   📋 Trimestre atual exibido no rótulo: {valor_atual}")
+                return
+
+            dropdown_trigger.click()
+            time.sleep(1)
+
+            # A lista de opções fica em um painel associado ao componente selectOneMenu
+            opcao_xpath = (
+                "//div[@id='tabViewDiarioClasse:formAbaConceitos:mediasConceito_panel']//li"
+                f"[normalize-space(text())='{trimestre_referencia}']"
+            )
+
+            # Informações do select oculto para listar opções disponíveis
+            select_xpath = "//select[@id='tabViewDiarioClasse:formAbaConceitos:mediasConceito_input']"
+            opcoes_map = {}
+            select_element = None
+            try:
+                select_element = WebDriverWait(self.driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, select_xpath))
+                )
+                option_elements = select_element.find_elements(By.TAG_NAME, "option")
+                print("   📋 Opções disponíveis no seletor:")
+                for opt in option_elements:
+                    texto_opcao = opt.text.strip()
+                    if not texto_opcao:
+                        continue
+                    valor_opcao = opt.get_attribute("value")
+                    chave_opcao = texto_opcao.strip().upper()
+                    opcoes_map[chave_opcao] = valor_opcao
+                    marcador = "(selecionado)" if texto_opcao.upper() == valor_atual else ""
+                    print(f"      - {texto_opcao} {marcador} (valor={valor_opcao})")
+            except Exception as e:
+                print(f"   ⚠️ Não foi possível listar opções do seletor oculto: {e}")
+                raise Exception(f"Não foi possível selecionar o trimestre '{trimestre_referencia}'")
+
+            chave_desejada = trimestre_referencia.strip().upper()
+            valor_opcao_desejada = opcoes_map.get(chave_desejada)
+            if valor_opcao_desejada is None:
+                raise Exception(
+                    f"Opção '{trimestre_referencia}' não está disponível na lista de médias de referência"
+                )
+
+            selecionado = False
+            try:
+                opcao_elemento = WebDriverWait(self.driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, opcao_xpath))
+                )
+                opcao_elemento.click()
+                time.sleep(1)
+
+                # Aguarda label refletir novo valor
+                WebDriverWait(self.driver, 5).until(
+                    lambda drv: drv.find_element(By.XPATH, label_xpath).text.strip().upper() == trimestre_referencia
+                )
+                selecionado = True
+            except Exception as e:
+                print(f"   ⚠️ Seleção via clique falhou: {e}")
+
+            if not selecionado:
+                print("   🔧 Utilizando fallback via JavaScript para selecionar o trimestre...")
+                self._selecionar_trimestre_via_js(select_element, valor_opcao_desejada)
+                WebDriverWait(self.driver, 5).until(
+                    lambda drv: drv.find_element(By.XPATH, label_xpath).text.strip().upper() == trimestre_referencia
+                )
+
+            novo_valor = self.driver.find_element(By.XPATH, label_xpath).text.strip().upper()
+            if novo_valor != trimestre_referencia:
+                raise Exception(
+                    f"Após seleção, o trimestre exibido permaneceu '{novo_valor}'. Esperado: '{trimestre_referencia}'"
+                )
+            print(f"   ✅ Trimestre selecionado com sucesso: {novo_valor}")
+
+            # Log adicional confirmando seleção através do select oculto
+            try:
+                select_value = select_element.get_attribute("value") if select_element else None
+                if select_value and valor_opcao_desejada and select_value != valor_opcao_desejada:
+                    raise Exception(
+                        f"Valor interno do select '{select_value}' difere do esperado '{valor_opcao_desejada}'"
+                    )
+                print(f"   🔍 Valor interno do select após seleção: {select_value}")
+            except Exception as e:
+                print(f"   ⚠️ Não foi possível ler valor do select oculto: {e}")
+
+        except Exception as e:
+            print(f"   ⚠️ Não foi possível selecionar o trimestre '{trimestre_referencia}': {e}")
+            # interrompe o fluxo e retornar a mensagem de erro para a API 
+            raise Exception(f"Não foi possível selecionar o trimestre '{trimestre_referencia}': {e}")
+            
+    def _selecionar_trimestre_via_js(self, select_element, valor_desejado):
+        """Seleciona o trimestre disparando os eventos necessários via JavaScript."""
+        script = """
+            const select = arguments[0];
+            const value = arguments[1];
+            select.value = value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        """
+        try:
+            self.driver.execute_script(script, select_element, valor_desejado)
+            time.sleep(1)
+        except Exception as e:
+            raise Exception(f"Fallback JS falhou ao definir valor '{valor_desejado}': {e}")
+
+    def _pagina_erro_diario_detectada(self):
+        """Verifica se a página atual é a tela de erro 500 do SGN."""
+        try:
+            current_url = self.driver.current_url or ""
+        except Exception:
+            current_url = ""
+
+        if "errors/500" in current_url.lower():
+            return True
+
+        try:
+            self.driver.find_element(By.CSS_SELECTOR, "span.exception-summary")
+            return True
+        except Exception:
+            return False
+
+    def _recuperar_de_pagina_erro(self):
+        """Tenta retornar à página inicial quando a tela de erro 500 é exibida."""
+        print("   🔁 Tentando recuperar da página de erro...")
+        try:
+            home_button = WebDriverWait(self.driver, 5).until(
+                EC.element_to_be_clickable((By.ID, "recNotAjax"))
+            )
+            home_button.click()
+            print("   ✅ Botão 'Início' clicado na página de erro")
+            WebDriverWait(self.driver, 10).until(
+                EC.url_contains("/pages/common/home.html")
+            )
+        except Exception as e:
+            print(f"   ⚠️ Falha ao clicar no botão 'Início': {e}")
+            # Fallback: navegar diretamente para a home
+            try:
+                self.driver.get("https://sgn.sesisenai.org.br/pages/common/home.html")
+                WebDriverWait(self.driver, 10).until(
+                    EC.url_contains("/pages/common/home.html")
+                )
+                print("   ✅ Página inicial carregada via fallback")
+            except Exception as e2:
+                print(f"   ❌ Falha ao carregar a página inicial via fallback: {e2}")
+
+        time.sleep(2)
+
+    def _pagina_erro_diario_detectada(self):
+        """Verifica se a página atual é a tela de erro 500 do SGN."""
+        try:
+            current_url = self.driver.current_url or ""
+        except Exception:
+            current_url = ""
+
+        if "errors/500" in current_url.lower():
+            return True
+
+        try:
+            self.driver.find_element(By.CSS_SELECTOR, "span.exception-summary")
+            return True
+        except Exception:
+            return False
+
+    def _recuperar_de_pagina_erro(self):
+        """Tenta retornar à página inicial quando a tela de erro 500 é exibida."""
+        print("   🔁 Tentando recuperar da página de erro...")
+        try:
+            home_button = WebDriverWait(self.driver, 5).until(
+                EC.element_to_be_clickable((By.ID, "recNotAjax"))
+            )
+            home_button.click()
+            print("   ✅ Botão 'Início' clicado na página de erro")
+            WebDriverWait(self.driver, 10).until(
+                EC.url_contains("/pages/common/home.html")
+            )
+        except Exception as e:
+            print(f"   ⚠️ Falha ao clicar no botão 'Início': {e}")
+            # Fallback: navegar diretamente para a home
+            try:
+                self.driver.get("https://sgn.sesisenai.org.br/pages/common/home.html")
+                WebDriverWait(self.driver, 10).until(
+                    EC.url_contains("/pages/common/home.html")
+                )
+                print("   ✅ Página inicial carregada via fallback")
+            except Exception as e2:
+                print(f"   ❌ Falha ao carregar a página inicial via fallback: {e2}")
+
+        time.sleep(2)
+
+    def _lancar_conceitos_todos_alunos(
+        self,
+        atitude_observada="Raramente",
+        conceito_habilidade="B",
+        trimestre_referencia=None,
+    ):
         """
         Lança conceitos para todos os alunos na tabela
         

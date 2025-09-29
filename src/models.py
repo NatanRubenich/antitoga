@@ -1,10 +1,8 @@
 """
-Modelos de dados para a API usando Pydantic
+Modelos de dados para a API de automação SGN
 
-Este módulo define as estruturas de dados que serão usadas para:
-- Validar dados de entrada da API
-- Documentar automaticamente a API no Swagger
-- Garantir tipagem correta dos dados
+Este módulo define as estruturas de dados usadas para validação
+e documentação da API de lançamento de conceitos.
 """
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -28,39 +26,83 @@ class ConceitoHabilidade(str, Enum):
     C = "C"
     NE = "NE"
 
+
+class TrimestreReferencia(str, Enum):
+    """Opções de trimestre para lançamento de conceitos"""
+    TR1 = "TR1"
+    TR2 = "TR2"
+    TR3 = "TR3"
+
 class LoginRequest(BaseModel):
     """
-    Modelo para requisição de login e lançamento de conceitos
+    Modelo para requisição de lançamento de conceitos
     
     Attributes:
-        username (str): Nome de usuário para login no SGN
-        password (str): Senha do usuário
+        username (str): Nome de usuário para login no SGN (3-100 caracteres)
+        password (str): Senha do usuário (3-100 caracteres)
         codigo_turma (str): Código identificador da turma (ex: "369528")
-        atitude_observada (AtitudeObservada, optional): Opção para observações de atitudes (padrão: "Raramente")
-        conceito_habilidade (ConceitoHabilidade, optional): Opção para conceitos de habilidades (padrão: "B")
-    
-    Example:
-        {
-            "username": "natan.rubenich",
-            "password": "Barning123", 
-            "codigo_turma": "369528",
-            "atitude_observada": "Sempre",
-            "conceito_habilidade": "A"
-        }
+        atitude_observada (AtitudeObservada): Opção para observações de atitudes (padrão: "Raramente")
+        conceito_habilidade (ConceitoHabilidade): Opção para conceitos de habilidades (padrão: "B")
+        trimestre_referencia (TrimestreReferencia): Trimestre em que os conceitos serão lançados
     """
-    username: str = Field(..., description="Nome de usuário do SGN", example="natan.rubenich")
-    password: str = Field(..., description="Senha do usuário", example="Barning123")
-    codigo_turma: str = Field(..., description="Código da turma", example="369528")
-    atitude_observada: Optional[AtitudeObservada] = Field(
-        default=AtitudeObservada.RARAMENTE, 
-        description="Opção para todas as observações de atitudes",
-        example="Sempre"
+    username: str = Field(
+        ..., 
+        min_length=3, 
+        max_length=100,
+        description="Nome de usuário do SGN (3-100 caracteres)",
+        example="natan.rubenich"
     )
-    conceito_habilidade: Optional[ConceitoHabilidade] = Field(
+    password: str = Field(
+        ..., 
+        min_length=3,
+        max_length=100,
+        description="Senha do usuário (3-100 caracteres)",
+        example="sua_senha_secreta"
+    )
+    codigo_turma: str = Field(
+        ..., 
+        min_length=1,
+        max_length=20,
+        pattern=r'^\d+$',
+        description="Código numérico da turma (apenas dígitos)",
+        example="369528"
+    )
+    atitude_observada: AtitudeObservada = Field(
+        default=AtitudeObservada.RARAMENTE,
+        description="Opção que será aplicada a TODAS as observações de atitudes",
+        example="Raramente"
+    )
+    conceito_habilidade: ConceitoHabilidade = Field(
         default=ConceitoHabilidade.B,
-        description="Opção para todos os conceitos de habilidades", 
-        example="A"
+        description="Opção que será aplicada a TODOS os conceitos de habilidades",
+        example="B"
     )
+    trimestre_referencia: TrimestreReferencia = Field(
+        default=TrimestreReferencia.TR2,
+        description="Trimestre de referência utilizado para lançamento dos conceitos",
+        example="TR2",
+        json_schema_extra={"widget": "select"}
+    )
+
+    class Config:
+        json_schema_extra = {
+            "examples": [
+                {
+                    "username": "natan.rubenich",
+                    "password": "sua_senha_secreta",
+                    "codigo_turma": "369528",
+                    "trimestre_referencia": "TR2"
+                },
+                {
+                    "username": "natan.rubenich",
+                    "password": "sua_senha_secreta",
+                    "codigo_turma": "369528",
+                    "atitude_observada": "Sempre",
+                    "conceito_habilidade": "A",
+                    "trimestre_referencia": "TR1"
+                }
+            ]
+        }
 
 class AutomationResponse(BaseModel):
     """
@@ -68,64 +110,7 @@ class AutomationResponse(BaseModel):
     
     Attributes:
         success (bool): Indica se a operação foi bem-sucedida
-        message (str): Mensagem descritiva do resultado da operação
-    
-    Example:
-        {
-            "success": true,
-            "message": "Login realizado e navegação concluída com sucesso!"
-        }
+        message (str): Mensagem descritiva do resultado
     """
     success: bool = Field(..., description="Status da operação (true/false)")
     message: str = Field(..., description="Mensagem descritiva do resultado")
-
-class LoginOnlyRequest(BaseModel):
-    """
-    Modelo para requisição de login apenas (sem navegação)
-    
-    Attributes:
-        username (str): Nome de usuário para login no SGN
-        password (str): Senha do usuário
-    
-    Example:
-        {
-            "username": "natan.rubenich",
-            "password": "Barning123"
-        }
-    """
-    username: str = Field(..., description="Nome de usuário do SGN", example="natan.rubenich")
-    password: str = Field(..., description="Senha do usuário", example="Barning123")
-
-class NavigateRequest(BaseModel):
-    """
-    Modelo para requisição de navegação (assume que já está logado)
-    
-    Attributes:
-        codigo_turma (str): Código identificador da turma
-    
-    Example:
-        {
-            "codigo_turma": "369528"
-        }
-    """
-    codigo_turma: str = Field(..., description="Código da turma", example="369528")
-
-class LoginStatusResponse(BaseModel):
-    """
-    Modelo para resposta do status de login
-    
-    Attributes:
-        is_logged_in (bool): Indica se está logado
-        current_url (str): URL atual do navegador
-        message (str): Mensagem adicional
-    
-    Example:
-        {
-            "is_logged_in": true,
-            "current_url": "https://sgn.sesisenai.org.br/pages/home",
-            "message": "Usuário está logado"
-        }
-    """
-    is_logged_in: bool = Field(..., description="Status do login (true/false)")
-    current_url: str = Field(..., description="URL atual do navegador")
-    message: str = Field(..., description="Mensagem descritiva")
