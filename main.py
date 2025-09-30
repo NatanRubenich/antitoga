@@ -29,13 +29,13 @@ if __name__ == "__main__":
     import uvicorn
     
     print("🚀 Iniciando SGN Automação de Notas API...")
-    print("📖 Documentação disponível em: http://localhost:8000/docs")
-    print("🔍 Health check em: http://localhost:8000/health")
+    print("📖 Documentação disponível em: http://localhost:8001/docs")
+    print("🔍 Health check em: http://localhost:8001/health")
     
     uvicorn.run(
-        app, 
+        "main:app", 
         host="0.0.0.0", 
-        port=8000, 
+        port=8001, 
         reload=True,
         log_level="info"
     )

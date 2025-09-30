@@ -226,9 +226,13 @@ class SGNAutomation:
             if not success:
                 return False, f"Falha ao navegar para conceitos: {message}"
 
-            # 2.1 Validar trimestre de referência antes do lançamento
-            print("\n2.1. Validando trimestre de referência antes do lançamento...")
+            # 2.1 PRIMEIRO: Selecionar média de referência (trimestre)
+            print("\n2.1. Selecionando média de referência (trimestre)...")
             self._selecionar_trimestre_referencia(trimestre_referencia)
+            
+            # Aguardar a tabela de alunos carregar após seleção do trimestre
+            print("   ⏳ Aguardando tabela de alunos carregar...")
+            time.sleep(2)
 
             # 3. Lançar conceitos para todos os alunos
             print("\n3. Iniciando lançamento de conceitos...")
@@ -852,30 +856,48 @@ class SGNAutomation:
             TimeoutException: Se a aba de Conceitos não for encontrada no tempo limite
         """
         print("6. Abrindo aba de Conceitos...")
+        print(f"   📍 URL atual antes de clicar: {self.driver.current_url}")
+        
+        # Capturar screenshot antes de tentar clicar
+        try:
+            self.driver.save_screenshot("debug_antes_clicar_conceitos.png")
+            print("   📸 Screenshot salvo: debug_antes_clicar_conceitos.png")
+        except:
+            pass
         
         try:
-            # Usar o XPath específico fornecido pelo usuário
-            print("   🔍 Procurando aba de Conceitos com XPath específico...")
-            conceitos_tab = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/ul/li[7]"))
-            )
-            
-            # Scroll até o elemento para garantir que está visível
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", conceitos_tab)
-            time.sleep(0.5)
-            
-            conceitos_tab.click()
-            print("   ✅ Aba de Conceitos clicada com XPath específico")
-            
-            # Aguardar mais tempo para a aba carregar completamente
-            print("   ⏳ Aguardando aba de Conceitos carregar completamente...")
-            time.sleep(5)  # Aumentado para garantir carregamento
-            
-            # Forçar clique duplo para garantir que a aba seja ativada
+            # Estratégia 1: Tentar pelo href específico (mais confiável)
+            print("   🔍 Estratégia 1: Procurando aba de Conceitos pelo href...")
             try:
-                print("   🔄 Garantindo que a aba está ativa com clique duplo...")
-                conceitos_tab.click()  # Segundo clique
-                time.sleep(2)
+                conceitos_tab = WebDriverWait(self.driver, 5).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href='#tabViewDiarioClasse:abaConceitos']"))
+                )
+                print("   ✅ Elemento encontrado pelo href!")
+            except:
+                print("   ❌ Não encontrado pelo href, tentando XPath específico...")
+                # Estratégia 2: XPath específico fornecido pelo usuário
+                print("   🔍 Estratégia 2: Usando XPath específico...")
+                print("   🎯 XPath: /html/body/div[3]/div[3]/div[2]/div[2]/div/div/ul/li[7]/a")
+                conceitos_tab = WebDriverWait(self.driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/ul/li[7]/a"))
+                )
+                print("   ✅ Elemento encontrado pelo XPath!")
+            
+            print("   🖱️ Clicando na aba de Conceitos via JavaScript (mais assertivo)...")
+            # Usar JavaScript diretamente (mais confiável)
+            self.driver.execute_script("arguments[0].click();", conceitos_tab)
+            print("   ✅ Clique via JavaScript executado")
+            
+            print(f"   📍 URL após clicar: {self.driver.current_url}")
+            
+            # Aguardar a aba carregar
+            print("   ⏳ Aguardando aba de Conceitos carregar...")
+            time.sleep(3)
+            
+            # Capturar screenshot após clicar
+            try:
+                self.driver.save_screenshot("debug_depois_clicar_conceitos.png")
+                print("   📸 Screenshot salvo: debug_depois_clicar_conceitos.png")
             except:
                 pass
             
@@ -1614,27 +1636,55 @@ class SGNAutomation:
             bool: True se conseguiu acessar, False caso contrário
         """
         try:
-            print(f"     🔗 Acessando aba de notas...")
+            print(f"     🔍 Acessando aba de notas do aluno {aluno_info['nome']}...")
             
-            # Clicar no botão da aba de notas
-            aba_notas_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, aluno_info["xpath_aba_notas"]))
+            # Usar o XPath armazenado para o link de edição (ícone do lápis)
+            link_xpath = aluno_info["xpath_aba_notas"]
+            
+            # Aguardar o link estar presente
+            link_element = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, link_xpath))
             )
             
-            # Scroll até o elemento
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", aba_notas_button)
+            # Garantir que o elemento está visível na viewport usando JavaScript
+            print(f"     📍 Garantindo que o elemento está visível...")
+            self.driver.execute_script("""
+                arguments[0].scrollIntoView({behavior: 'instant', block: 'center', inline: 'center'});
+            """, link_element)
             time.sleep(0.5)
             
-            aba_notas_button.click()
+            # Aguardar estar clicável
+            WebDriverWait(self.driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, link_xpath))
+            )
             
-            # Aguardar modal/aba carregar
+            # Clicar usando JavaScript (mais confiável)
+            print(f"     🖱️ Clicando no ícone do lápis...")
+            self.driver.execute_script("arguments[0].click();", link_element)
+            print(f"     ✅ Link clicado via JavaScript")
+            
+            # Aguardar modal abrir completamente
             time.sleep(2)
             
-            print(f"     ✅ Aba de notas acessada")
+            # Verificar se a modal abriu
+            try:
+                WebDriverWait(self.driver, 5).until(
+                    EC.presence_of_element_located((By.ID, "modalDadosAtitudes"))
+                )
+                print(f"     ✅ Modal aberta")
+            except:
+                print(f"     ⚠️ Modal pode não ter aberto corretamente")
+            
             return True
             
         except Exception as e:
             print(f"     ❌ Erro ao acessar aba de notas: {str(e)}")
+            # Tentar capturar screenshot para debug
+            try:
+                self.driver.save_screenshot(f"debug_erro_clicar_aluno_{aluno_info['linha']}.png")
+                print(f"     📸 Screenshot salvo: debug_erro_clicar_aluno_{aluno_info['linha']}.png")
+            except:
+                pass
             return False
     
     def _preencher_observacoes_atitudes(self, opcao_atitude="Raramente"):
@@ -1697,10 +1747,6 @@ class SGNAutomation:
                         try:
                             select_element = self.driver.find_element(By.XPATH, select_xpath)
                             
-                            # Scroll até o elemento
-                            self.driver.execute_script("arguments[0].scrollIntoView(true);", select_element)
-                            time.sleep(0.2)
-                            
                             # Verificar valor atual usando JavaScript (select está oculto)
                             valor_atual = self.driver.execute_script("return arguments[0].value;", select_element)
                             print(f"       📋 Valor atual: {valor_atual}")
@@ -1722,22 +1768,18 @@ class SGNAutomation:
                             # Obter valor mapeado ou usar o valor original
                             valor_para_preencher = opcoes_mapeadas.get(opcao_atitude, opcao_atitude)
                             
-                            if valor_atual != valor_para_preencher:
-                                # Usar JavaScript para alterar o valor do select oculto
-                                self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
-                                
-                                # Disparar evento change para atualizar a interface
-                                self.driver.execute_script("""
-                                    var event = new Event('change', { bubbles: true });
-                                    arguments[0].dispatchEvent(event);
-                                """, select_element)
-                                
-                                print(f"       ✓ Atitude {i+1}: '{opcao_atitude}' selecionado (JavaScript)")
-                                atitudes_preenchidas += 1
-                                time.sleep(0.5)  # Aguardar processamento
-                            else:
-                                print(f"       ✓ Atitude {i+1}: Já estava '{opcao_atitude}'")
-                                atitudes_preenchidas += 1
+                            # Sempre usar JavaScript para garantir o preenchimento
+                            self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
+                            
+                            # Disparar evento change para atualizar a interface
+                            self.driver.execute_script("""
+                                var event = new Event('change', { bubbles: true });
+                                arguments[0].dispatchEvent(event);
+                            """, select_element)
+                            
+                            print(f"       ✓ Atitude {i+1}: '{opcao_atitude}' selecionado (JavaScript)")
+                            atitudes_preenchidas += 1
+                            time.sleep(0.3)  # Reduzido para agilizar
                             
                         except Exception as select_error:
                             print(f"       ❌ Erro ao selecionar '{opcao_atitude}' na linha {i+1}: {str(select_error)}")
@@ -1795,10 +1837,17 @@ class SGNAutomation:
                 total_linhas = len(linhas)
                 print(f"     📊 Encontradas {total_linhas} linhas de conceitos de habilidades")
                 
-                for i, linha_element in enumerate(linhas):
+                for i in range(len(linhas)):
                     try:
+                        # Re-buscar as linhas a cada iteração para evitar stale element
+                        linhas_atualizadas = self.driver.find_elements(By.XPATH, f"{tabela_habilidades_xpath}/tr[@data-ri]")
+                        if i >= len(linhas_atualizadas):
+                            print(f"       ⚠️ Linha {i+1} não encontrada após atualização")
+                            continue
+                            
+                        linha_element = linhas_atualizadas[i]
                         data_ri = linha_element.get_attribute("data-ri")
-                        print(f"       📝 Processando linha {i+1} (data-ri={data_ri})")
+                        print(f"       📝 Processando linha {i+1}/{len(linhas)} (data-ri={data_ri})")
                         
                         # Procurar select nativo diretamente usando o ID específico
                         select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
@@ -1806,10 +1855,6 @@ class SGNAutomation:
                         
                         try:
                             select_element = self.driver.find_element(By.XPATH, select_xpath)
-                            
-                            # Scroll até o elemento
-                            self.driver.execute_script("arguments[0].scrollIntoView(true);", select_element)
-                            time.sleep(0.2)
                             
                             # Verificar valor atual usando JavaScript (select está oculto)
                             valor_atual = self.driver.execute_script("return arguments[0].value;", select_element)
@@ -1836,22 +1881,18 @@ class SGNAutomation:
                                 print(f"       ⚠️ Valor inválido: '{opcao_conceito}'. Usando 'B' como padrão.")
                                 valor_para_preencher = "B"
                             
-                            if valor_atual != valor_para_preencher:
-                                # Usar JavaScript para alterar o valor do select oculto
-                                self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
-                                
-                                # Disparar evento change para atualizar a interface
-                                self.driver.execute_script("""
-                                    var event = new Event('change', { bubbles: true });
-                                    arguments[0].dispatchEvent(event);
-                                """, select_element)
-                                
-                                print(f"       ✓ Habilidade {i+1}: '{valor_para_preencher}' selecionado (JavaScript)")
-                                habilidades_preenchidas += 1
-                                time.sleep(0.5)  # Aguardar processamento
-                            else:
-                                print(f"       ✓ Habilidade {i+1}: Já estava '{valor_para_preencher}'")
-                                habilidades_preenchidas += 1
+                            # Sempre usar JavaScript para garantir o preenchimento
+                            self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
+                            
+                            # Disparar evento change para atualizar a interface
+                            self.driver.execute_script("""
+                                var event = new Event('change', { bubbles: true });
+                                arguments[0].dispatchEvent(event);
+                            """, select_element)
+                            
+                            print(f"       ✓ Habilidade {i+1}: '{valor_para_preencher}' selecionado (JavaScript)")
+                            habilidades_preenchidas += 1
+                            time.sleep(0.3)  # Reduzido para agilizar
                             
                         except Exception as select_error:
                             print(f"       ❌ Erro ao selecionar '{opcao_conceito}' na linha {i+1}: {str(select_error)}")
@@ -1874,6 +1915,7 @@ class SGNAutomation:
         """
         Fecha a modal de conceitos/atitudes usando ESC
         O sistema salva automaticamente, então só precisa fechar a modal
+        Aguarda a modal fechar completamente antes de retornar
         
         Returns:
             bool: True se conseguiu fechar, False caso contrário
@@ -1886,8 +1928,31 @@ class SGNAutomation:
                 from selenium.webdriver.common.keys import Keys
                 body = self.driver.find_element(By.TAG_NAME, "body")
                 body.send_keys(Keys.ESCAPE)
+                
+                # Aguardar modal fechar completamente
+                time.sleep(1.5)
+                
+                # Verificar se a modal realmente fechou
+                try:
+                    modal_visivel = self.driver.execute_script("""
+                        var modal = document.getElementById('modalDadosAtitudes');
+                        return modal && modal.style.display !== 'none' && modal.offsetParent !== null;
+                    """)
+                    
+                    if modal_visivel:
+                        print(f"     ⚠️ Modal ainda visível, tentando fechar via JavaScript...")
+                        self.driver.execute_script("""
+                            var modal = document.getElementById('modalDadosAtitudes');
+                            if (modal) {
+                                modal.style.display = 'none';
+                                modal.setAttribute('aria-hidden', 'true');
+                            }
+                        """)
+                        time.sleep(0.5)
+                except:
+                    pass
+                
                 print(f"     ✅ Modal fechada com ESC (salvamento automático)")
-                time.sleep(1)
                 return True
             except Exception as esc_error:
                 print(f"     ⚠️ ESC não funcionou, tentando botão de fechar...")
@@ -1923,6 +1988,22 @@ class SGNAutomation:
                     
                 except:
                     continue
+            
+            # Se nenhum método funcionou, tentar forçar via JavaScript
+            print(f"     ⚠️ Tentando fechar modal via JavaScript como último recurso...")
+            try:
+                self.driver.execute_script("""
+                    var modal = document.getElementById('modalDadosAtitudes');
+                    if (modal) {
+                        modal.style.display = 'none';
+                        modal.setAttribute('aria-hidden', 'true');
+                    }
+                """)
+                time.sleep(0.5)
+                print(f"     ✅ Modal fechada via JavaScript")
+                return True
+            except:
+                pass
             
             # Se não encontrou botão, tenta ESC
             print(f"     ⚠️ Botão voltar não encontrado, tentando ESC")
