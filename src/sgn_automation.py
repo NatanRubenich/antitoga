@@ -233,6 +233,9 @@ class SGNAutomation:
             # Aguardar a tabela de alunos carregar após seleção do trimestre
             print("   ⏳ Aguardando tabela de alunos carregar...")
             time.sleep(2)
+            
+            # Fechar pop-up de aviso se aparecer
+            self._fechar_popup_aviso()
 
             # 3. Lançar conceitos para todos os alunos
             print("\n3. Iniciando lançamento de conceitos...")
@@ -394,19 +397,13 @@ class SGNAutomation:
             # PRINTAR RESUMO DAS AVALIAÇÕES COLETADAS
             self._printar_resumo_avaliacoes(dados_av, dados_rp, mapeamentos)
 
-            # 4. AGORA SIM, navegar para aba Conceitos
-            print("\n4. Navegando para aba Conceitos...")
+            # 4. AGORA SIM, navegar para aba Conceitos e selecionar trimestre
+            print("\n4. Navegando para aba Conceitos e selecionando trimestre...")
             try:
-                aba_conceitos = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Conceitos')]")
-                aba_conceitos.click()
-                time.sleep(1)  # Otimizado: 2s → 1s
-                print("   ✓ Aba Conceitos acessada")
+                self._open_conceitos_tab(trimestre_referencia=trimestre_referencia)
+                print("   ✓ Aba Conceitos acessada e trimestre selecionado")
             except Exception as e:
                 return False, f"Erro ao acessar aba Conceitos: {e}"
-
-            # 5. Selecionar trimestre de referência
-            print("\n5. Selecionando trimestre de referência...")
-            self._selecionar_trimestre_referencia(trimestre_referencia)
 
             # 6. Lançar conceitos INTELIGENTES para todos os alunos
             print("\n6. Iniciando lançamento INTELIGENTE de conceitos...")
@@ -839,18 +836,19 @@ class SGNAutomation:
 
         raise Exception("Não foi possível acessar o diário após múltiplas tentativas")
     
-    def _open_conceitos_tab(self):
+    def _open_conceitos_tab(self, trimestre_referencia=None):
         """
-        Abre a aba de Conceitos no diário da turma
+        Abre a aba de Conceitos no diário da turma e seleciona o trimestre
         
         Este método:
         1. Localiza a aba/link de "Conceitos" na página do diário
         2. Aguarda até que o elemento seja clicável
         3. Clica na aba para abri-la
-        4. Aguarda o carregamento do conteúdo da aba
+        4. SELECIONA O TRIMESTRE DE REFERÊNCIA (ANTES de buscar tabela)
+        5. Aguarda o carregamento do conteúdo da aba
         
-        O XPath usado procura por elementos que contenham o texto "Conceitos"
-        ou que tenham "conceito" no atributo href, para maior flexibilidade.
+        Args:
+            trimestre_referencia: Trimestre a ser selecionado (TR1, TR2, TR3)
         
         Raises:
             TimeoutException: Se a aba de Conceitos não for encontrada no tempo limite
@@ -907,6 +905,16 @@ class SGNAutomation:
             
             # Verificar se estamos realmente na aba de Conceitos
             self._verificar_aba_conceitos_ativa()
+            
+            # IMPORTANTE: Selecionar trimestre ANTES de buscar tabela de alunos
+            if trimestre_referencia:
+                print(f"   🔧 Selecionando trimestre de referência: {trimestre_referencia}")
+                self._selecionar_trimestre_referencia(trimestre_referencia)
+                print("   ⏳ Aguardando tabela de alunos carregar após seleção do trimestre...")
+                time.sleep(2)
+                
+                # Fechar pop-up de aviso se aparecer
+                self._fechar_popup_aviso()
             
             # Verificar se a tabela de alunos está presente
             try:
@@ -1447,6 +1455,8 @@ class SGNAutomation:
             # Se mapeamentos já foram coletados, usar eles
             if mapeamentos_prontos:
                 mapeamentos = mapeamentos_prontos
+                # Extrair cabecalhos dos mapeamentos
+                cabecalhos = mapeamentos.get("cabecalhos", [])
                 print("   ✓ Usando mapeamentos já coletados")
             else:
                 # Coletar mapeamentos (fluxo antigo para compatibilidade)
@@ -1483,12 +1493,31 @@ class SGNAutomation:
                 try:
                     print(f"\n   👤 Processando aluno {indice}/{total_alunos}: {aluno_info['nome']}")
 
+                    # PRIMEIRO: Coletar notas da tabela de alunos (ANTES de abrir modal)
+                    notas = self._coletar_notas_aluno(aluno_info, cabecalhos, mapeamentos["colunas"])
+                    
+                    # Mostrar notas coletadas de forma organizada
+                    print(f"\n   📊 Conceitos coletados da tabela:")
+                    if notas:
+                        for av_id, nota in notas.items():
+                            if nota:  # Só mostrar se tiver valor
+                                # Verificar se é recuperação
+                                if av_id.startswith("RP"):
+                                    origem_av = mapeamentos["recuperacao_por_avaliacao"].get(av_id)
+                                    if origem_av:
+                                        print(f"      🔄 {av_id}: {nota} (recuperação de {origem_av})")
+                                    else:
+                                        print(f"      🔄 {av_id}: {nota} (recuperação)")
+                                else:
+                                    print(f"      📝 {av_id}: {nota}")
+                    else:
+                        print(f"      ⚠️ Nenhuma nota encontrada")
+                    print()
+
                     if not self._acessar_aba_notas_aluno(aluno_info):
                         print(f"   ❌ Não foi possível abrir a modal de notas de {aluno_info['nome']}")
                         alunos_com_erro += 1
                         continue
-
-                    notas = self._coletar_notas_aluno(aluno_info, cabecalhos, mapeamentos["colunas"])
 
                     if not self._preencher_observacoes_atitudes(atitude_padrao):
                         print(f"   ⚠️ Observações de atitudes não preenchidas para {aluno_info['nome']}")
@@ -2400,6 +2429,7 @@ class SGNAutomation:
             "colunas": colunas,
             "habilidades": habilidades,
             "recuperacao_por_avaliacao": recuperacao_por_av,
+            "cabecalhos": cabecalhos["identificadores"],  # Adicionar cabeçalhos ao resultado
         }
         
         total_habilidades = sum(len(h) for h in habilidades.values())
@@ -2438,7 +2468,9 @@ class SGNAutomation:
             if habilidades_av and len(habilidades_av) > 0:
                 print(f"      🎯 Habilidades vinculadas ({len(habilidades_av)}):")
                 for hab in habilidades_av:
-                    habilidade_curta = hab['habilidade'][:70] + "..." if len(hab['habilidade']) > 70 else hab['habilidade']
+                    # Limpar asterisco e espaços extras para exibição
+                    habilidade_limpa = self._limpar_texto_habilidade(hab['habilidade'])
+                    habilidade_curta = habilidade_limpa[:70] + "..." if len(habilidade_limpa) > 70 else habilidade_limpa
                     print(f"         • {habilidade_curta}")
             else:
                 print(f"      ❌ NENHUMA HABILIDADE VINCULADA - Esta avaliação não será usada!")
@@ -2710,7 +2742,16 @@ class SGNAutomation:
                     label = celula.text.strip()
                     notas[ident] = label if label and label != " " else ""
 
-            print(f"     📊 Notas coletadas: {notas}")
+            # Printar notas coletadas de forma detalhada
+            print(f"\n     📊 NOTAS COLETADAS DO ALUNO:")
+            print(f"     {'-'*60}")
+            if notas:
+                for av_id, nota in notas.items():
+                    nota_display = nota if nota else "(vazio)"
+                    print(f"     {av_id:10} = {nota_display}")
+            else:
+                print(f"     ⚠️ Nenhuma nota encontrada")
+            print(f"     {'-'*60}\n")
 
         except Exception as e:
             print(f"   ⚠️ Erro ao coletar notas do aluno: {e}")
@@ -2728,76 +2769,180 @@ class SGNAutomation:
             
             tabela_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']/tr[@data-ri]"
             linhas = self.driver.find_elements(By.XPATH, tabela_xpath)
+            total_linhas = len(linhas)
+            print(f"     📊 Encontradas {total_linhas} habilidades para preencher")
 
-            for linha in linhas:
-                data_ri = linha.get_attribute("data-ri")
-
+            # Usar índice para evitar stale element
+            for i in range(total_linhas):
                 try:
-                    cols = linha.find_elements(By.TAG_NAME, "td")
-                    if len(cols) < 3:
+                    # Re-buscar as linhas a cada iteração para evitar stale element
+                    linhas_atualizadas = self.driver.find_elements(By.XPATH, tabela_xpath)
+                    if i >= len(linhas_atualizadas):
+                        print(f"       ⚠️ Linha {i+1} não encontrada após atualização")
                         continue
-                        
-                    competencia_texto = cols[1].text.strip()
-                    habilidade_texto = cols[2].text.strip()
                     
-                except Exception:
+                    linha = linhas_atualizadas[i]
+                    data_ri = linha.get_attribute("data-ri")
+                    print(f"\n       📝 Processando habilidade {i+1}/{total_linhas} (data-ri={data_ri})")
+
+                    try:
+                        cols = linha.find_elements(By.TAG_NAME, "td")
+                        if len(cols) < 3:
+                            print(f"       ⚠️ Linha {i+1} não tem colunas suficientes (encontradas: {len(cols)})")
+                            continue
+                            
+                        # Estrutura da tabela:
+                        # cols[0] = Competência (C10)
+                        # cols[1] = Habilidade (H4 - Selecionar linguagem...)
+                        # cols[2] = Conceito (dropdown)
+                        # cols[3] = Aplicar RA?
+                        
+                        competencia_texto = cols[0].text.strip()  # Coluna 0: Competência
+                        habilidade_texto = cols[1].text.strip()   # Coluna 1: Habilidade
+                        
+                        print(f"          📋 Competência: {competencia_texto}")
+                        print(f"          📋 Habilidade: {habilidade_texto[:80]}...")
+                        
+                    except Exception as col_error:
+                        print(f"       ⚠️ Erro ao ler colunas da linha {i+1}: {col_error}")
+                        continue
+                except Exception as linha_error:
+                    print(f"       ❌ Erro ao processar linha {i+1}: {linha_error}")
                     continue
 
-                conceito = conceito_padrao
+                # Inicializar sem conceito padrão - DEVE encontrar correspondência
+                conceito = None
                 av_utilizada = None
-                tipo_origem = "padrão"
+                tipo_origem = None
                 
                 # Procurar em qual avaliação esta habilidade está vinculada
+                # IMPORTANTE: Uma habilidade pode estar em múltiplas avaliações
+                # Nesse caso, deve-se usar a MAIOR NOTA
+                encontrou_correspondencia = False
+                habilidade_limpa = self._limpar_texto_habilidade(habilidade_texto)
+                
+                print(f"\n          🔍 Buscando correspondência para: {habilidade_limpa[:70]}...")
+                print(f"          📊 Notas disponíveis do aluno: {notas_aluno}")
+                
+                # Lista para armazenar todas as notas encontradas para esta habilidade
+                notas_encontradas = []
+                
                 for av, habilidades_av in mapeamentos["habilidades"].items():
-                    if any(self._texto_corresponde(habilidade_texto, h["habilidade"]) for h in habilidades_av):
-                        # Encontrou! Esta habilidade pertence a esta avaliação
-                        conceito_av = notas_aluno.get(av, "")
-                        if conceito_av:
-                            conceito = conceito_av
-                            av_utilizada = av
-                            tipo_origem = "avaliação"
+                    for hab_av in habilidades_av:
+                        hab_av_limpa = self._limpar_texto_habilidade(hab_av["habilidade"])
+                        
+                        # Debug: mostrar comparação
+                        # print(f"             Comparando com {av}: {hab_av_limpa[:50]}...")
+                        
+                        if self._texto_corresponde(habilidade_limpa, hab_av_limpa):
+                            # Encontrou! Esta habilidade pertence a esta avaliação
+                            encontrou_correspondencia = True
+                            
+                            # Verificar se tem recuperação para esta avaliação (prioridade)
+                            recuperacao = mapeamentos["recuperacao_por_avaliacao"].get(av)
+                            if recuperacao:
+                                conceito_rec = notas_aluno.get(recuperacao, "")
+                                if conceito_rec:
+                                    notas_encontradas.append({
+                                        "conceito": conceito_rec,
+                                        "origem": recuperacao,
+                                        "tipo": "recuperação",
+                                        "av_base": av
+                                    })
+                                    continue  # Pula para próxima, RP tem prioridade
+                            
+                            # Se não tem RP, usar nota da avaliação
+                            conceito_av = notas_aluno.get(av, "")
+                            if conceito_av:
+                                notas_encontradas.append({
+                                    "conceito": conceito_av,
+                                    "origem": av,
+                                    "tipo": "avaliação",
+                                    "av_base": av
+                                })
+                            
+                            # NÃO fazer break aqui! Continuar procurando em outras avaliações
+                
+                # Se encontrou notas, escolher a MAIOR
+                if notas_encontradas:
+                    # Ordenar por conceito (A > B > C > D > E)
+                    notas_ordenadas = sorted(notas_encontradas, key=lambda x: x["conceito"])
+                    melhor_nota = notas_ordenadas[0]  # A primeira é a melhor (A vem antes de B)
+                    
+                    conceito = melhor_nota["conceito"]
+                    av_utilizada = melhor_nota["origem"]
+                    tipo_origem = melhor_nota["tipo"]
+                    
+                    print(f"          🔗 Habilidade encontrada em {len(notas_encontradas)} avaliação(ões)")
+                    print(f"             Modal: {habilidade_limpa[:50]}...")
+                    
+                    if len(notas_encontradas) > 1:
+                        print(f"          📊 Notas encontradas:")
+                        for nota in notas_encontradas:
+                            print(f"             - {nota['origem']}: {nota['conceito']} ({nota['tipo']})")
+                        print(f"          ⭐ Usando MAIOR nota: {conceito} da {av_utilizada} ({tipo_origem})")
+                    else:
+                        print(f"          📊 Nota da {av_utilizada}: {conceito} ({tipo_origem})")
+                
+                elif not encontrou_correspondencia:
+                    # ERRO CRÍTICO: Habilidade de avaliação não encontrada no modal
+                    
+                    # Listar todas as habilidades disponíveis nas avaliações para debug
+                    print(f"\n          ⚠️ HABILIDADES DISPONÍVEIS NAS AVALIAÇÕES:")
+                    for av_debug, habs_debug in mapeamentos["habilidades"].items():
+                        print(f"          {av_debug}:")
+                        for hab_debug in habs_debug:
+                            hab_debug_limpa = self._limpar_texto_habilidade(hab_debug["habilidade"])
+                            print(f"             • {hab_debug_limpa[:70]}...")
+                    
+                    erro_msg = (
+                        f"\n\n"
+                        f"="*80 + "\n"
+                        f"❌ ERRO CRÍTICO: HABILIDADE DO MODAL NÃO ENCONTRADA NAS AVALIAÇÕES\n"
+                        f"="*80 + "\n"
+                        f"Habilidade do modal: {habilidade_limpa}\n"
+                        f"Competência: {competencia_texto}\n"
+                        f"\n"
+                        f"ℹ️  IMPORTANTE:\n"
+                        f"   Esta habilidade aparece no modal do aluno, mas NÃO foi encontrada\n"
+                        f"   em nenhuma avaliação cadastrada na turma.\n"
+                        f"   \n"
+                        f"   No modo INTELIGENTE, TODAS as habilidades do modal devem estar\n"
+                        f"   vinculadas a pelo menos uma avaliação.\n"
+                        f"   \n"
+                        f"   Verifique se:\n"
+                        f"   1. A habilidade está vinculada a alguma avaliação no SGN\n"
+                        f"   2. O texto da habilidade é idêntico em ambos os lugares\n"
+                        f"   3. A avaliação foi cadastrada corretamente\n"
+                        f"="*80 + "\n"
+                    )
+                    print(erro_msg)
+                    raise Exception(f"Habilidade '{habilidade_limpa[:60]}...' do modal não está vinculada a nenhuma avaliação. Vincule a habilidade a uma avaliação no SGN.")
 
-                        # Verificar se tem recuperação para esta avaliação
-                        recuperacao = mapeamentos["recuperacao_por_avaliacao"].get(av)
-                        if recuperacao:
-                            conceito_rec = notas_aluno.get(recuperacao, "")
-                            if conceito_rec:
-                                conceito = conceito_rec
-                                av_utilizada = recuperacao
-                                tipo_origem = "recuperação"
-
-                        break
-
+                # VALIDAÇÃO: Se não encontrou correspondência, NÃO preencher
+                if conceito is None or av_utilizada is None:
+                    # Já foi tratado no bloco elif acima com raise Exception
+                    continue
+                
                 # Preparar mensagem detalhada
                 habilidade_curta = habilidade_texto[:60] if len(habilidade_texto) > 60 else habilidade_texto
                 
-                if av_utilizada:
-                    nota_info = f"Nota do aluno na {av_utilizada}: '{conceito}'"
-                    origem_info = f"({tipo_origem})"
-                else:
-                    nota_info = f"Conceito padrão: '{conceito}'"
-                    origem_info = "(sem mapeamento)"
-                
                 print(f"       📌 {habilidade_curta}")
-                print(f"          {nota_info} {origem_info}")
+                print(f"          ✅ Lançando: {conceito} (origem: {av_utilizada} - {tipo_origem})")
 
                 select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
                 try:
                     select_element = self.driver.find_element(By.ID, select_id)
-                    valor_atual = select_element.get_attribute("value")
                     
-                    if valor_atual != conceito:
-                        self.driver.execute_script("arguments[0].value = arguments[1];", select_element, conceito)
-                        self.driver.execute_script(
-                            "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
-                            select_element,
-                        )
-                        print(f"          ✅ Conceito '{conceito}' aplicado com sucesso!")
-                        preenchidos += 1
-                        time.sleep(0.3)
-                    else:
-                        print(f"          ℹ️ Conceito '{conceito}' já estava aplicado")
-                        preenchidos += 1
+                    # Sempre preencher usando JavaScript para garantir
+                    self.driver.execute_script("arguments[0].value = arguments[1];", select_element, conceito)
+                    self.driver.execute_script(
+                        "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+                        select_element,
+                    )
+                    print(f"          ✅ Conceito '{conceito}' aplicado com sucesso!")
+                    preenchidos += 1
+                    time.sleep(0.3)
                         
                 except Exception as select_error:
                     print(f"       ❌ Erro ao aplicar conceito: {select_error}")
@@ -2810,15 +2955,93 @@ class SGNAutomation:
 
         return preenchidos > 0
 
+    def _fechar_popup_aviso(self):
+        """
+        Fecha pop-up de aviso se aparecer (ex: "Por favor, selecione uma média de referência")
+        """
+        try:
+            # Procurar por mensagens de aviso/info
+            popup_selectors = [
+                "//div[contains(@class, 'ui-messages-info')]//a[contains(@class, 'ui-messages-close')]",
+                "//div[contains(@class, 'ui-messages')]//a[contains(@class, 'ui-messages-close')]",
+                "//a[@class='ui-messages-close']",
+                "//span[@class='ui-icon ui-icon-close']/.."
+            ]
+            
+            for selector in popup_selectors:
+                try:
+                    close_button = self.driver.find_element(By.XPATH, selector)
+                    if close_button.is_displayed():
+                        print("   ⚠️ Pop-up de aviso detectado, fechando...")
+                        close_button.click()
+                        time.sleep(0.5)
+                        print("   ✅ Pop-up fechado")
+                        return True
+                except:
+                    continue
+            
+            # Nenhum pop-up encontrado (normal)
+            return False
+            
+        except Exception as e:
+            # Não é crítico se não conseguir fechar
+            return False
+    
+    def _limpar_texto_habilidade(self, texto):
+        """
+        Limpa o texto da habilidade removendo:
+        - Asterisco (*) no início (indica habilidade já usada)
+        - Espaços extras
+        - Caracteres especiais desnecessários
+        """
+        import re
+        
+        if not texto:
+            return ""
+        
+        # Remover asterisco no início
+        texto = texto.lstrip('*').strip()
+        
+        # Remover espaços extras
+        texto = re.sub(r'\s+', ' ', texto).strip()
+        
+        return texto
+    
     def _texto_corresponde(self, texto_alvo, texto_fonte):
         """
         Compara duas strings ignorando acentos, espaços extras e caixa
+        Usa múltiplas estratégias para garantir correspondência
         """
+        import re  # Importar no início da função
+        
         def normalizar(valor):
             if not valor:
                 return ""
+            # Limpar asterisco e espaços extras PRIMEIRO
+            valor = valor.lstrip('*').strip()
+            # Normalizar acentos
             valor = unicodedata.normalize("NFD", valor)
             valor = "".join(c for c in valor if unicodedata.category(c) != "Mn")
+            # Remover espaços extras
             return re.sub(r"\s+", " ", valor).strip().lower()
 
-        return normalizar(texto_alvo) == normalizar(texto_fonte)
+        texto_alvo_norm = normalizar(texto_alvo)
+        texto_fonte_norm = normalizar(texto_fonte)
+        
+        # Estratégia 1: Comparação exata
+        if texto_alvo_norm == texto_fonte_norm:
+            return True
+        
+        # Estratégia 2: Verificar se um contém o outro (para habilidades longas)
+        if texto_alvo_norm in texto_fonte_norm or texto_fonte_norm in texto_alvo_norm:
+            return True
+        
+        # Estratégia 3: Extrair código da habilidade (H1, H2, etc.) e comparar
+        codigo_alvo = re.search(r'\b(h\d+|c\d+)\b', texto_alvo_norm)
+        codigo_fonte = re.search(r'\b(h\d+|c\d+)\b', texto_fonte_norm)
+        
+        if codigo_alvo and codigo_fonte:
+            if codigo_alvo.group(1) == codigo_fonte.group(1):
+                return True
+        
+        return False
