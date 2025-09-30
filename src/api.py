@@ -154,6 +154,113 @@ def create_app():
                 message=error_msg
             )
     
+    @app.post("/lancar-conceito-inteligente", response_model=AutomationResponse)
+    async def lancar_conceito_inteligente(
+        request: LoginRequest = Body(
+            ...,
+            examples={
+                "padrao": {
+                    "summary": "Padrão (Raramente/B)",
+                    "description": "Aplica conceitos baseados nas avaliações cadastradas",
+                    "value": {
+                        "username": "seu.usuario",
+                        "password": "sua.senha",
+                        "codigo_turma": "369528",
+                        "trimestre_referencia": "TR2"
+                    },
+                },
+                "excelente": {
+                    "summary": "Com fallback para A",
+                    "description": "Se não houver mapeamento, usa A como padrão",
+                    "value": {
+                        "username": "seu.usuario",
+                        "password": "sua.senha",
+                        "codigo_turma": "369528",
+                        "atitude_observada": "Sempre",
+                        "conceito_habilidade": "A",
+                        "trimestre_referencia": "TR1"
+                    },
+                },
+            },
+        )
+    ):
+        """
+        🆕 NOVO: Lança conceitos INTELIGENTES baseados nas avaliações cadastradas
+        
+        Este endpoint realiza o fluxo INTELIGENTE de lançamento de conceitos:
+        1. Faz login no sistema SGN
+        2. Navega para aba "Aulas/Avaliações" e coleta todas as avaliações cadastradas
+        3. Coleta recuperações paralelas e mapeia para suas avaliações de origem
+        4. Abre cada modal de avaliação e extrai as habilidades vinculadas
+        5. Para cada aluno:
+           - Lê as notas da tabela principal (AV1=B, RP1=A, etc.)
+           - Abre modal de conceitos
+           - Aplica atitudes com o padrão escolhido
+           - Para cada habilidade, aplica o conceito da avaliação correspondente
+           - Se existe recuperação (RP), usa RP em vez de AV
+           - Se não há mapeamento, usa o conceito padrão
+        
+        Diferença do endpoint anterior:
+        - Endpoint anterior: Aplica o MESMO conceito para TODAS as habilidades
+        - Este endpoint: Aplica conceitos DIFERENTES baseados nas avaliações de cada habilidade
+        
+        Exemplo:
+        - Aluno tem AV1=B e RP1=A
+        - Habilidade H1 está vinculada à AV1
+        - Sistema aplica conceito "A" (da RP1) para H1
+        
+        Args:
+            request (LoginRequest): Dados de login, código da turma e opções de conceitos
+            
+        Returns:
+            AutomationResponse: Resultado da automação com estatísticas
+        """
+        try:
+            request_dict = request.dict()
+            if 'password' in request_dict:
+                request_dict['password'] = '***'
+            
+            print("\n" + "="*80)
+            print(" 🆕 NOVA REQUISIÇÃO - MODO INTELIGENTE")
+            print("-"*80)
+            print(f"Dados da requisição: {request_dict}")
+            
+            atitude_val = request.atitude_observada.value if hasattr(request, 'atitude_observada') and request.atitude_observada else None
+            conceito_val = request.conceito_habilidade.value if hasattr(request, 'conceito_habilidade') and request.conceito_habilidade else None
+            
+            print(f"🔧 Parâmetros recebidos:")
+            print(f"   - Usuário: {request.username}")
+            print(f"   - Código da turma: {request.codigo_turma}")
+            print(f"   - Atitude observada: {atitude_val or 'Padrão (Raramente)'}")
+            print(f"   - Conceito habilidade (fallback): {conceito_val or 'Padrão (B)'}")
+            print(f"   - Trimestre referência: {request.trimestre_referencia}")
+            print(f"   - Modo: INTELIGENTE (baseado em avaliações)")
+            print("-"*80 + "\n")
+
+            # Executar lançamento INTELIGENTE de conceitos
+            success, message = sgn_automation.lancar_conceito_inteligente(
+                username=request.username,
+                password=request.password,
+                codigo_turma=request.codigo_turma,
+                atitude_observada=atitude_val,
+                conceito_habilidade=conceito_val,
+                trimestre_referencia=request.trimestre_referencia
+            )
+            
+            return AutomationResponse(
+                success=success,
+                message=message
+            )
+            
+        except Exception as e:
+            error_msg = f"Erro na API: {str(e)}"
+            print(f"❌ {error_msg}")
+            
+            return AutomationResponse(
+                success=False,
+                message=error_msg
+            )
+    
     
     @app.get("/")
     async def root():
@@ -178,12 +285,17 @@ def create_app():
         """
         return {
             "message": "SGN Automação de Notas API",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "endpoints": {
-                "lancar_conceito_trimestre": "POST /lancar-conceito-trimestre - 🎯 PRINCIPAL: Lançar conceitos para todos os alunos",
+                "lancar_conceito_trimestre": "POST /lancar-conceito-trimestre - 📝 SIMPLES: Aplica o MESMO conceito para TODAS as habilidades",
+                "lancar_conceito_inteligente": "POST /lancar-conceito-inteligente - 🧠 INTELIGENTE: Aplica conceitos baseados nas avaliações de cada habilidade",
                 "health": "GET /health - Health check da API",
                 "docs": "GET /docs - Documentação Swagger",
                 "redoc": "GET /redoc - Documentação ReDoc"
+            },
+            "modos": {
+                "simples": "Aplica o mesmo conceito (ex: B) para todas as habilidades de todos os alunos",
+                "inteligente": "Lê as avaliações cadastradas e aplica o conceito específico de cada avaliação para sua habilidade correspondente"
             }
         }
     
