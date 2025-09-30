@@ -95,7 +95,7 @@ def test_login_and_navigate():
     # Dados de teste (substitua pelos seus dados reais)
     data = {
         "username": "natan.rubenich",
-        "password": "Barning123",
+        "password": "senha123",
         "codigo_turma": "369528"
     }
     
