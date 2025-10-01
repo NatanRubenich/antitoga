@@ -65,15 +65,27 @@ class SeleniumManager:
         chrome_options.add_argument("--disable-infobars")
         chrome_options.add_argument("--disable-popup-blocking")
         
-        # Configurar preferências para desabilitar notificações de localização
+        # Desabilitar detecção de senhas comprometidas e Safe Browsing
+        chrome_options.add_argument("--disable-features=PasswordLeakDetection")
+        chrome_options.add_argument("--disable-features=SafeBrowsing")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        
+        # Configurar preferências para desabilitar notificações de localização e senhas
         prefs = {
             "profile.default_content_setting_values.notifications": 2,  # 0=Solicitar, 1=Permitir, 2=Não permitir
             "profile.default_content_setting_values.geolocation": 2,   # Desabilitar localização
             "profile.managed_default_content_settings.images": 1,      # Carregar imagens
             "credentials_enable_service": False,                       # Desabilitar gerenciador de senhas
             "profile.password_manager_enabled": False,                 # Desabilitar gerenciador de senhas
+            "password_manager_enabled": False,                         # Desabilitar gerenciador de senhas (alternativo)
+            "profile.password_manager_leak_detection": False,          # Desabilitar detecção de vazamento de senhas
+            "safebrowsing.enabled": False,                             # Desabilitar Safe Browsing (que detecta senhas vazadas)
         }
-        chrome_options.add_experimental_option("prefs", prefs)  # Evita problemas de memória
+        chrome_options.add_experimental_option("prefs", prefs)
+        
+        # Desabilitar completamente o gerenciador de senhas do Chrome
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+        chrome_options.add_experimental_option("useAutomationExtension", False)
         chrome_options.add_argument("--window-size=1920,1080")  # Define tamanho da janela
         # chrome_options.add_argument("--headless")  # Descomente para modo headless (sem interface)
         

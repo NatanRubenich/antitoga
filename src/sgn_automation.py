@@ -11,6 +11,7 @@ O módulo é dividido em métodos pequenos e específicos para facilitar
 manutenção e debugging de cada etapa do processo.
 """
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 import time
@@ -66,6 +67,7 @@ class SGNAutomation:
             self._access_login_page()           # 1. Acessar página inicial
             self._click_initial_login_button()  # 2. Clicar no botão "Entrar" inicial
             self._perform_login_credentials(username, password)  # 3. Inserir credenciais
+            self._fechar_modal_senha_chrome()   # 4. Fechar modal de senha do Chrome (se aparecer)
             
             return True, "Login realizado com sucesso!"
         except Exception as e:
@@ -226,16 +228,9 @@ class SGNAutomation:
             if not success:
                 return False, f"Falha ao navegar para conceitos: {message}"
 
-            # 2.1 PRIMEIRO: Selecionar média de referência (trimestre)
-            print("\n2.1. Selecionando média de referência (trimestre)...")
+            # 2.1 Validar trimestre de referência antes do lançamento
+            print("\n2.1. Validando trimestre de referência antes do lançamento...")
             self._selecionar_trimestre_referencia(trimestre_referencia)
-            
-            # Aguardar a tabela de alunos carregar após seleção do trimestre
-            print("   ⏳ Aguardando tabela de alunos carregar...")
-            time.sleep(2)
-            
-            # Fechar pop-up de aviso se aparecer
-            self._fechar_popup_aviso()
 
             # 3. Lançar conceitos para todos os alunos
             print("\n3. Iniciando lançamento de conceitos...")
@@ -378,11 +373,10 @@ class SGNAutomation:
             print("\n2. Navegando para o diário da turma...")
             diario_url = f"https://sgn.sesisenai.org.br/pages/diarioClasse/diario-classe.html?idDiario={codigo_turma}"
             self.driver.get(diario_url)
-            time.sleep(2)  # Otimizado: 3s → 2s
+            time.sleep(3)
             
             # 3. COLETAR AVALIAÇÕES PRIMEIRO (antes de ir para aba Conceitos)
             print("\n3. Coletando avaliações cadastradas...")
-            cabecalhos = self._coletar_configuracao_conceitos()
             dados_av = self._coletar_avaliacoes_turma()
             
             # VERIFICAÇÃO CRÍTICA: Se não há avaliações, encerrar com erro
@@ -392,21 +386,33 @@ class SGNAutomation:
                 raise Exception(erro_msg)
             
             dados_rp = self._coletar_recuperacoes_paralelas()
+
+            # 4. AGORA SIM, navegar para aba Conceitos
+            print("\n4. Navegando para aba Conceitos...")
+            try:
+                aba_conceitos = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Conceitos')]")
+                aba_conceitos.click()
+                time.sleep(2)
+                print("   ✓ Aba Conceitos acessada")
+            except Exception as e:
+                return False, f"Erro ao acessar aba Conceitos: {e}"
+
+            # 5. Selecionar trimestre de referência
+            print("\n5. Selecionando trimestre de referência...")
+            self._selecionar_trimestre_referencia(trimestre_referencia)
+            
+            # 6. COLETAR CABEÇALHOS APÓS SELECIONAR O TRIMESTRE (CRÍTICO!)
+            print("\n6. Coletando cabeçalhos da tabela de conceitos...")
+            cabecalhos = self._coletar_configuracao_conceitos()
+            
+            # 7. Construir mapeamentos
             mapeamentos = self._construir_mapeamento_avaliacoes(cabecalhos, dados_av, dados_rp)
             
             # PRINTAR RESUMO DAS AVALIAÇÕES COLETADAS
             self._printar_resumo_avaliacoes(dados_av, dados_rp, mapeamentos)
 
-            # 4. AGORA SIM, navegar para aba Conceitos e selecionar trimestre
-            print("\n4. Navegando para aba Conceitos e selecionando trimestre...")
-            try:
-                self._open_conceitos_tab(trimestre_referencia=trimestre_referencia)
-                print("   ✓ Aba Conceitos acessada e trimestre selecionado")
-            except Exception as e:
-                return False, f"Erro ao acessar aba Conceitos: {e}"
-
-            # 6. Lançar conceitos INTELIGENTES para todos os alunos
-            print("\n6. Iniciando lançamento INTELIGENTE de conceitos...")
+            # 8. Lançar conceitos INTELIGENTES para todos os alunos
+            print("\n8. Iniciando lançamento INTELIGENTE de conceitos...")
             print(f"🔧 Usando valores mapeados:")
             print(f"   - Atitude: {atitude_mapeada}")
             print(f"   - Conceito (fallback): {conceito_mapeado}")
@@ -625,8 +631,8 @@ class SGNAutomation:
             initial_button.click()
             print("   ✅ Botão 'Entrar' inicial clicado")
             
-            # Aguarda a próxima tela carregar
-            time.sleep(1.5)  # Otimizado: 3s → 1.5s
+            # Aguarda a próxima tela carregar (reduzido de 5 para 3 segundos)
+            time.sleep(3)
             
             # Debug: Mostrar nova URL e título
             current_url = self.driver.current_url
@@ -750,9 +756,9 @@ class SGNAutomation:
                 print("   ⚠️ Botão não encontrado, tentando Enter no campo de senha...")
                 password_field.send_keys("\n")
             
-            # Aguarda o processamento do login e redirecionamento
+            # Aguarda o processamento do login e redirecionamento (reduzido de 8 para 4 segundos)
             print("   ⏳ Aguardando redirecionamento...")
-            time.sleep(2)  # Otimizado: 4s → 2s
+            time.sleep(4)
             
             # Verifica se o login foi bem-sucedido
             new_url = self.driver.current_url
@@ -836,66 +842,47 @@ class SGNAutomation:
 
         raise Exception("Não foi possível acessar o diário após múltiplas tentativas")
     
-    def _open_conceitos_tab(self, trimestre_referencia=None):
+    def _open_conceitos_tab(self):
         """
-        Abre a aba de Conceitos no diário da turma e seleciona o trimestre
+        Abre a aba de Conceitos no diário da turma
         
         Este método:
         1. Localiza a aba/link de "Conceitos" na página do diário
         2. Aguarda até que o elemento seja clicável
         3. Clica na aba para abri-la
-        4. SELECIONA O TRIMESTRE DE REFERÊNCIA (ANTES de buscar tabela)
-        5. Aguarda o carregamento do conteúdo da aba
+        4. Aguarda o carregamento do conteúdo da aba
         
-        Args:
-            trimestre_referencia: Trimestre a ser selecionado (TR1, TR2, TR3)
+        O XPath usado procura por elementos que contenham o texto "Conceitos"
+        ou que tenham "conceito" no atributo href, para maior flexibilidade.
         
         Raises:
             TimeoutException: Se a aba de Conceitos não for encontrada no tempo limite
         """
         print("6. Abrindo aba de Conceitos...")
-        print(f"   📍 URL atual antes de clicar: {self.driver.current_url}")
-        
-        # Capturar screenshot antes de tentar clicar
-        try:
-            self.driver.save_screenshot("debug_antes_clicar_conceitos.png")
-            print("   📸 Screenshot salvo: debug_antes_clicar_conceitos.png")
-        except:
-            pass
         
         try:
-            # Estratégia 1: Tentar pelo href específico (mais confiável)
-            print("   🔍 Estratégia 1: Procurando aba de Conceitos pelo href...")
+            # Usar o XPath específico fornecido pelo usuário
+            print("   🔍 Procurando aba de Conceitos com XPath específico...")
+            conceitos_tab = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/ul/li[7]"))
+            )
+            
+            # Scroll até o elemento para garantir que está visível
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", conceitos_tab)
+            time.sleep(0.5)
+            
+            conceitos_tab.click()
+            print("   ✅ Aba de Conceitos clicada com XPath específico")
+            
+            # Aguardar mais tempo para a aba carregar completamente
+            print("   ⏳ Aguardando aba de Conceitos carregar completamente...")
+            time.sleep(5)  # Aumentado para garantir carregamento
+            
+            # Forçar clique duplo para garantir que a aba seja ativada
             try:
-                conceitos_tab = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href='#tabViewDiarioClasse:abaConceitos']"))
-                )
-                print("   ✅ Elemento encontrado pelo href!")
-            except:
-                print("   ❌ Não encontrado pelo href, tentando XPath específico...")
-                # Estratégia 2: XPath específico fornecido pelo usuário
-                print("   🔍 Estratégia 2: Usando XPath específico...")
-                print("   🎯 XPath: /html/body/div[3]/div[3]/div[2]/div[2]/div/div/ul/li[7]/a")
-                conceitos_tab = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((By.XPATH, "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/ul/li[7]/a"))
-                )
-                print("   ✅ Elemento encontrado pelo XPath!")
-            
-            print("   🖱️ Clicando na aba de Conceitos via JavaScript (mais assertivo)...")
-            # Usar JavaScript diretamente (mais confiável)
-            self.driver.execute_script("arguments[0].click();", conceitos_tab)
-            print("   ✅ Clique via JavaScript executado")
-            
-            print(f"   📍 URL após clicar: {self.driver.current_url}")
-            
-            # Aguardar a aba carregar
-            print("   ⏳ Aguardando aba de Conceitos carregar...")
-            time.sleep(3)
-            
-            # Capturar screenshot após clicar
-            try:
-                self.driver.save_screenshot("debug_depois_clicar_conceitos.png")
-                print("   📸 Screenshot salvo: debug_depois_clicar_conceitos.png")
+                print("   🔄 Garantindo que a aba está ativa com clique duplo...")
+                conceitos_tab.click()  # Segundo clique
+                time.sleep(2)
             except:
                 pass
             
@@ -905,16 +892,6 @@ class SGNAutomation:
             
             # Verificar se estamos realmente na aba de Conceitos
             self._verificar_aba_conceitos_ativa()
-            
-            # IMPORTANTE: Selecionar trimestre ANTES de buscar tabela de alunos
-            if trimestre_referencia:
-                print(f"   🔧 Selecionando trimestre de referência: {trimestre_referencia}")
-                self._selecionar_trimestre_referencia(trimestre_referencia)
-                print("   ⏳ Aguardando tabela de alunos carregar após seleção do trimestre...")
-                time.sleep(2)
-                
-                # Fechar pop-up de aviso se aparecer
-                self._fechar_popup_aviso()
             
             # Verificar se a tabela de alunos está presente
             try:
@@ -1028,7 +1005,7 @@ class SGNAutomation:
             print(f"   🔄 Selecionando trimestre de referência '{trimestre_referencia}'...")
 
             # Aguardar o select estar presente (após AJAX da aba Conceitos)
-            time.sleep(1)  # Otimizado: 2s → 1s
+            time.sleep(2)
             
             # XPATH ESPECÍFICO DO LABEL (deve clicar aqui primeiro)
             label_xpath_especifico = "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/div/div[7]/form/div/div/div[1]/div/label"
@@ -1038,84 +1015,75 @@ class SGNAutomation:
             label_xpath = "//label[@id='tabViewDiarioClasse:formAbaConceitos:mediasConceito_label']"
             div_select_xpath = "//div[@id='tabViewDiarioClasse:formAbaConceitos:mediasConceito']"
             
-            # 1. CLICAR NO DIV DO SELECT PARA EXPANDIR O DROPDOWN
-            print(f"   🖱️ Clicando no select para expandir opções...")
-            try:
-                # Tentar clicar no div do select (elemento clicável do PrimeFaces)
-                try:
-                    div_clicavel = self.driver.find_element(By.XPATH, div_select_xpath)
-                    print(f"   ✓ Div do select encontrado")
-                except:
-                    # Fallback: tentar xpath específico do label
-                    div_clicavel = self.driver.find_element(By.XPATH, label_xpath_especifico)
-                    print(f"   ✓ Label encontrado (fallback)")
-                
-                # Scroll até o elemento
-                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", div_clicavel)
-                time.sleep(0.5)
-                
-                # Clicar para expandir
-                try:
-                    div_clicavel.click()
-                    print(f"   ✓ Clique direto no select")
-                except:
-                    # Se falhar, tentar via JavaScript
-                    self.driver.execute_script("arguments[0].click();", div_clicavel)
-                    print(f"   ✓ Clique via JavaScript")
-                
-                time.sleep(1)  # Otimizado: 1.5s → 1s (dropdown expandir)
-                print(f"   ✓ Dropdown expandido")
-                
-            except Exception as e:
-                print(f"   ⚠️ Erro ao clicar no select: {e}")
-                print(f"   ℹ️ Tentando continuar com JavaScript direto...")
-            
-            # 2. LER OPÇÕES DISPONÍVEIS COM MÚLTIPLAS TENTATIVAS
+            # 1. LOCALIZAR O SELECT
             select_element = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, select_xpath))
             )
             
-            # LER OPÇÕES DISPONÍVEIS
-            print(f"   📋 Lendo opções do select...")
+            # 2. AGUARDAR AS OPÇÕES ESTAREM CARREGADAS NO SELECT
+            print(f"   ⏳ Aguardando opções do select carregarem...")
+            try:
+                # Aguardar até que existam pelo menos 2 options (Selecione + TR1/TR2/TR3)
+                WebDriverWait(self.driver, 10).until(
+                    lambda d: len(d.find_element(By.XPATH, select_xpath).find_elements(By.TAG_NAME, "option")) >= 2
+                )
+                print(f"   ✓ Opções carregadas no select")
+                time.sleep(1)
+            except Exception as e:
+                print(f"   ⚠️ Timeout aguardando opções: {e}")
+                print(f"   ℹ️ Tentando clicar no select para forçar carregamento...")
+                
+                # Tentar clicar no div do select para disparar AJAX
+                try:
+                    div_select = self.driver.find_element(By.XPATH, div_select_xpath)
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", div_select)
+                    time.sleep(0.5)
+                    div_select.click()
+                    time.sleep(2)  # Aguardar AJAX
+                    
+                    # Fechar dropdown
+                    self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                    time.sleep(1)
+                    
+                    # Aguardar novamente
+                    WebDriverWait(self.driver, 5).until(
+                        lambda d: len(d.find_element(By.XPATH, select_xpath).find_elements(By.TAG_NAME, "option")) >= 2
+                    )
+                    print(f"   ✓ Opções carregadas após clique")
+                except Exception as e2:
+                    print(f"   ❌ Não foi possível carregar opções: {e2}")
             
-            # Verificar valor atual
+            # 3. LER OPÇÕES DO SELECT
+            # Re-localizar o select para garantir que temos o elemento atualizado
+            select_element = self.driver.find_element(By.XPATH, select_xpath)
             valor_atual_select = select_element.get_attribute("value") or ""
             
             # Mapear opções disponíveis
             option_elements = select_element.find_elements(By.TAG_NAME, "option")
             opcoes_map = {}
             
-            print(f"      Total de <option> encontrados: {len(option_elements)}")
-            
+            print(f"   📋 Lendo opções do select (total: {len(option_elements)} options)...")
             for idx, opt in enumerate(option_elements):
-                texto_opcao = opt.text.strip()
+                # IMPORTANTE: PrimeFaces esconde o select, então .text não funciona
+                # Usar textContent ou innerHTML para pegar o texto real
+                texto_opcao = opt.get_attribute("textContent") or opt.get_attribute("innerHTML") or opt.text
+                texto_opcao = texto_opcao.strip()
                 valor_opcao = opt.get_attribute("value") or ""
                 
-                # O select está oculto, então o texto pode estar vazio
-                # Inferir o texto pelo valor: 1=TR1, 2=TR2, 3=TR3
-                if not texto_opcao and valor_opcao:
-                    if valor_opcao == "1":
-                        texto_opcao = "TR1"
-                    elif valor_opcao == "2":
-                        texto_opcao = "TR2"
-                    elif valor_opcao == "3":
-                        texto_opcao = "TR3"
+                print(f"      Option {idx}: texto='{texto_opcao}', value='{valor_opcao}'")
                 
-                print(f"      Option[{idx}]: texto='{texto_opcao}', value='{valor_opcao}'")
-                
-                # Pular opção vazia ou "Selecione"
-                if not valor_opcao or not texto_opcao or texto_opcao.lower() == "selecione":
+                if not texto_opcao or texto_opcao.lower() == "selecione" or texto_opcao.lower() == "nenhuma":
                     continue
-                
+                    
                 chave_opcao = texto_opcao.strip().upper()
                 opcoes_map[chave_opcao] = valor_opcao
                 
                 is_selected = opt.get_attribute("selected") == "true" or valor_opcao == valor_atual_select
                 marcador = "✓ (selecionado)" if is_selected else ""
-                print(f"      ✓ Mapeado: {chave_opcao} → valor={valor_opcao} {marcador}")
+                print(f"         → Mapeado: {chave_opcao} = {valor_opcao} {marcador}")
             
-            print(f"   ✅ Total de opções mapeadas: {len(opcoes_map)}")
-            print(f"   📋 Opções disponíveis: {list(opcoes_map.keys())}")
+            print(f"   📊 Total de opções válidas mapeadas: {len(opcoes_map)}")
+            print(f"   🗺️ Mapa de opções: {opcoes_map}")
 
             # 3. VERIFICAR SE OPÇÃO EXISTE
             chave_desejada = trimestre_referencia.strip().upper()
@@ -1131,91 +1099,13 @@ class SGNAutomation:
                 print(f"   ✅ Trimestre '{trimestre_referencia}' já está selecionado")
                 return
 
-            # 5. SELECIONAR A OPÇÃO CORRETA NO DROPDOWN
+            # 5. SELECIONAR A OPÇÃO CORRETA
             print(f"   🔧 Selecionando '{trimestre_referencia}' (valor={valor_opcao_desejada})...")
-            
-            # ESTRATÉGIA: Usar o panel de itens do PrimeFaces
-            # O dropdown do PrimeFaces cria um panel com ID: [select_id]_items
-            # Cada opção é um <li> com atributo data-label
-            
-            # ESTRATÉGIA 1: Tentar clicar na opção do panel (dropdown visível)
-            sucesso_selecao = False
-            
-            try:
-                # 1. Aguardar o panel de itens aparecer
-                panel_items_id = "tabViewDiarioClasse:formAbaConceitos:mediasConceito_items"
-                panel_items_xpath = f"//ul[@id='{panel_items_id}']"
-                
-                print(f"   ⏳ Aguardando panel de opções aparecer...")
-                panel_items = WebDriverWait(self.driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, panel_items_xpath))
-                )
-                print(f"   ✓ Panel de opções encontrado")
-                
-                # Listar todas as opções do panel
-                todas_opcoes_li = panel_items.find_elements(By.TAG_NAME, "li")
-                print(f"   📋 Total de <li> no panel: {len(todas_opcoes_li)}")
-                for idx, li in enumerate(todas_opcoes_li):
-                    texto_li = li.text.strip()
-                    data_label = li.get_attribute("data-label") or ""
-                    print(f"      Li[{idx}]: texto='{texto_li}', data-label='{data_label}'")
-                
-                # 2. Localizar a opção específica dentro do panel
-                # Formato: //ul[@id='..._items']/li[@data-label='TR2']
-                opcao_li_xpath = f"//ul[@id='{panel_items_id}']/li[@data-label='{trimestre_referencia}']"
-                
-                # Também tentar por índice baseado no valor (TR1=1, TR2=2, TR3=3)
-                # As opções começam do índice 1 (0 é "Selecione")
-                indice_opcao = int(valor_opcao_desejada)  # 1, 2 ou 3
-                opcao_li_xpath_indice = f"//ul[@id='{panel_items_id}']/li[{indice_opcao + 1}]"  # +1 porque "Selecione" é o índice 1
-                
-                print(f"   🎯 Procurando opção '{trimestre_referencia}'...")
-                
-                # Tentar localizar a opção
-                opcao_li = None
-                try:
-                    opcao_li = self.driver.find_element(By.XPATH, opcao_li_xpath)
-                    print(f"   ✓ Opção encontrada (data-label)")
-                except:
-                    try:
-                        opcao_li = self.driver.find_element(By.XPATH, opcao_li_xpath_indice)
-                        print(f"   ✓ Opção encontrada (índice {indice_opcao + 1})")
-                    except:
-                        # Último recurso: buscar por texto
-                        opcao_li_xpath_texto = f"//ul[@id='{panel_items_id}']/li[contains(text(), '{trimestre_referencia}')]"
-                        try:
-                            opcao_li = self.driver.find_element(By.XPATH, opcao_li_xpath_texto)
-                            print(f"   ✓ Opção encontrada (texto)")
-                        except:
-                            print(f"   ❌ Não conseguiu encontrar opção no panel")
-                
-                # 3. Clicar na opção (se encontrou)
-                if opcao_li:
-                    print(f"   🖱️ Clicando na opção '{trimestre_referencia}'...")
-                    try:
-                        # Scroll até a opção
-                        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", opcao_li)
-                        time.sleep(0.3)
-                        
-                        # Tentar clicar via JavaScript (mais confiável)
-                        self.driver.execute_script("arguments[0].click();", opcao_li)
-                        print(f"   ✓ Opção clicada via JavaScript")
-                        sucesso_selecao = True
-                    except Exception as e_click:
-                        print(f"   ⚠️ Erro ao clicar na opção: {e_click}")
-                    
-                    time.sleep(1)
-                
-            except Exception as e:
-                print(f"   ⚠️ Não conseguiu clicar na opção do panel: {e}")
-                print(f"   🔄 Usando método JavaScript direto no select (fallback)...")
-                
-                # Fallback: selecionar via JavaScript no select oculto
-                self._selecionar_trimestre_via_js(select_element, valor_opcao_desejada)
+            self._selecionar_trimestre_via_js(select_element, valor_opcao_desejada)
             
             # 6. AGUARDAR AJAX CARREGAR TABELA
             print(f"   ⏳ Aguardando tabela de conceitos carregar...")
-            time.sleep(4)  # Aumentado para garantir que AJAX complete
+            time.sleep(3)
 
             # Verificar se foi selecionado
             novo_valor_select = select_element.get_attribute("value")
@@ -1455,13 +1345,17 @@ class SGNAutomation:
             # Se mapeamentos já foram coletados, usar eles
             if mapeamentos_prontos:
                 mapeamentos = mapeamentos_prontos
-                # Extrair cabecalhos dos mapeamentos
-                cabecalhos = mapeamentos.get("cabecalhos", [])
                 print("   ✓ Usando mapeamentos já coletados")
             else:
                 # Coletar mapeamentos (fluxo antigo para compatibilidade)
                 print("   🔍 Coletando configuração de avaliações...")
+                
+                # IMPORTANTE: Coletar cabeçalhos DEPOIS de selecionar o trimestre
+                # (os cabeçalhos mudam conforme o trimestre selecionado)
+                print("   🔍 Coletando cabeçalhos da tabela de conceitos...")
                 cabecalhos = self._coletar_configuracao_conceitos()
+                print(f"   ✓ Cabeçalhos coletados: {cabecalhos['identificadores']}")
+                
                 dados_av = self._coletar_avaliacoes_turma()
                 
                 if not dados_av or len(dados_av) == 0:
@@ -1476,12 +1370,16 @@ class SGNAutomation:
             if not mapeamentos["habilidades"]:
                 print("   ⚠️ AVISO: Nenhuma habilidade vinculada às avaliações. Será usado apenas o conceito padrão.")
 
-            alunos = self._obter_lista_alunos()
+            # DEBUG: Verificar mapeamentos
+            print(f"\n   🔍 DEBUG: mapeamentos['colunas'] = {mapeamentos['colunas']}")
+
+            # Obter lista de alunos COM preview das notas
+            alunos = self._obter_lista_alunos(mapa_colunas=mapeamentos["colunas"])
             total_alunos = len(alunos)
             if total_alunos == 0:
                 return False, "Nenhum aluno encontrado na tabela"
 
-            print(f"   📋 Encontrados {total_alunos} alunos na turma")
+            print(f"\n   📋 Encontrados {total_alunos} alunos na turma")
 
             alunos_processados = 0
             alunos_com_erro = 0
@@ -1493,36 +1391,22 @@ class SGNAutomation:
                 try:
                     print(f"\n   👤 Processando aluno {indice}/{total_alunos}: {aluno_info['nome']}")
 
-                    # PRIMEIRO: Coletar notas da tabela de alunos (ANTES de abrir modal)
-                    notas = self._coletar_notas_aluno(aluno_info, cabecalhos, mapeamentos["colunas"])
-                    
-                    # Mostrar notas coletadas de forma organizada
-                    print(f"\n   📊 Conceitos coletados da tabela:")
-                    if notas:
-                        for av_id, nota in notas.items():
-                            if nota:  # Só mostrar se tiver valor
-                                # Verificar se é recuperação
-                                if av_id.startswith("RP"):
-                                    origem_av = mapeamentos["recuperacao_por_avaliacao"].get(av_id)
-                                    if origem_av:
-                                        print(f"      🔄 {av_id}: {nota} (recuperação de {origem_av})")
-                                    else:
-                                        print(f"      🔄 {av_id}: {nota} (recuperação)")
-                                else:
-                                    print(f"      📝 {av_id}: {nota}")
-                    else:
-                        print(f"      ⚠️ Nenhuma nota encontrada")
-                    print()
+                    # 1️⃣ COLETAR NOTAS DA TABELA PRINCIPAL (ANTES de abrir a modal)
+                    notas = self._coletar_notas_aluno(aluno_info, mapeamentos["colunas"])
+                    print(f"      📊 Notas coletadas: {notas}")
 
+                    # 2️⃣ ABRIR A MODAL DE HABILIDADES/ATITUDES
                     if not self._acessar_aba_notas_aluno(aluno_info):
                         print(f"   ❌ Não foi possível abrir a modal de notas de {aluno_info['nome']}")
                         alunos_com_erro += 1
                         continue
 
+                    # 3️⃣ PREENCHER ATITUDES
                     if not self._preencher_observacoes_atitudes(atitude_padrao):
                         print(f"   ⚠️ Observações de atitudes não preenchidas para {aluno_info['nome']}")
 
-                    if not self._preencher_conceitos_habilidades_por_notas(notas, mapeamentos, conceito_padrao):
+                    # 4️⃣ PREENCHER HABILIDADES BASEADO NAS NOTAS
+                    if not self._preencher_conceitos_habilidades_por_notas(notas, mapeamentos):
                         print(f"   ⚠️ Conceitos de habilidades não atualizados para {aluno_info['nome']}")
 
                     print(f"   ✅ Conceitos aplicados para {aluno_info['nome']} (salvamento automático)")
@@ -1533,6 +1417,8 @@ class SGNAutomation:
 
                 except Exception as aluno_erro:
                     print(f"   ❌ Erro ao processar {aluno_info.get('nome', 'desconhecido')}: {aluno_erro}")
+                    import traceback
+                    traceback.print_exc()
                     alunos_com_erro += 1
                     try:
                         self._fechar_modal_conceitos()
@@ -1551,13 +1437,17 @@ class SGNAutomation:
             print(f"❌ {erro}")
             return False, erro
     
-    def _obter_lista_alunos(self):
+    def _obter_lista_alunos(self, mapa_colunas=None):
         """
         Obtém a lista de todos os alunos na tabela de conceitos
         
+        Args:
+            mapa_colunas (dict, optional): Mapeamento de colunas de avaliações
+                                           Se fornecido, coleta as notas junto
+        
         Returns:
             list: Lista de dicionários com informações dos alunos
-                  [{"nome": str, "linha": int, "xpath_aba_notas": str}, ...]
+                  [{"nome": str, "linha": int, "xpath_aba_notas": str, "notas_preview": dict}, ...]
         """
         print("   🔍 Identificando alunos na tabela...")
         
@@ -1641,8 +1531,18 @@ class SGNAutomation:
                             "data_ri": data_ri
                         }
                         
+                        # Se mapa_colunas foi fornecido, coletar notas
+                        if mapa_colunas:
+                            notas_preview = self._coletar_notas_preview(data_ri, mapa_colunas)
+                            aluno_info["notas_preview"] = notas_preview
+                            
+                            # Formatar notas para exibição
+                            notas_str = ", ".join([f"{k}={v if v else '∅'}" for k, v in notas_preview.items()])
+                            print(f"     👤 Aluno {linha}: {nome_aluno} (data-ri={data_ri}) → {notas_str}")
+                        else:
+                            print(f"     👤 Aluno {linha}: {nome_aluno} (data-ri={data_ri})")
+                        
                         alunos.append(aluno_info)
-                        print(f"     👤 Aluno {linha}: {nome_aluno} (data-ri={data_ri})")
                     
                 except:
                     # Linha não existe ou está vazia, parar busca
@@ -1653,6 +1553,57 @@ class SGNAutomation:
         except Exception as e:
             print(f"   ❌ Erro ao obter lista de alunos: {str(e)}")
             return []
+    
+    def _coletar_notas_preview(self, data_ri, mapa_colunas):
+        """
+        Coleta as notas de um aluno de forma rápida (com logs de debug)
+        
+        Args:
+            data_ri: Índice da linha do aluno
+            mapa_colunas: Mapeamento de colunas
+        
+        Returns:
+            dict: Notas do aluno {identificador: valor}
+        """
+        notas = {}
+        
+        print(f"        🔍 DEBUG: data_ri='{data_ri}', mapa_colunas={mapa_colunas}")
+        
+        try:
+            for ident, idx in sorted(mapa_colunas.items(), key=lambda x: x[1]):
+                indice_coluna = idx + 3
+                select_xpath = f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{data_ri}']/td[{indice_coluna + 1}]//select[contains(@id, '_input')]"
+                
+                print(f"        🔍 DEBUG {ident}: XPath = {select_xpath}")
+                
+                try:
+                    select = self.driver.find_element(By.XPATH, select_xpath)
+                    print(f"        ✅ DEBUG {ident}: <select> encontrado")
+                    
+                    if select.get_attribute("disabled"):
+                        notas[ident] = ""
+                        print(f"        🔒 DEBUG {ident}: disabled")
+                        continue
+                    
+                    try:
+                        option = select.find_element(By.CSS_SELECTOR, "option[selected='selected']")
+                        valor = option.get_attribute("value") or ""
+                        print(f"        📊 DEBUG {ident}: valor bruto = '{valor}'")
+                        notas[ident] = valor.strip() if valor and valor.strip() and valor not in [" ", "\xa0"] else ""
+                        print(f"        ✅ DEBUG {ident}: valor final = '{notas[ident]}'")
+                    except Exception as e:
+                        notas[ident] = ""
+                        print(f"        ❌ DEBUG {ident}: erro ao buscar option - {str(e)}")
+                except Exception as e:
+                    notas[ident] = ""
+                    print(f"        ❌ DEBUG {ident}: erro ao buscar select - {str(e)}")
+        except Exception as e:
+            print(f"        ❌ DEBUG: erro geral - {str(e)}")
+            import traceback
+            traceback.print_exc()
+        
+        print(f"        📋 DEBUG: notas finais = {notas}")
+        return notas
     
     def _acessar_aba_notas_aluno(self, aluno_info):
         """
@@ -1665,55 +1616,27 @@ class SGNAutomation:
             bool: True se conseguiu acessar, False caso contrário
         """
         try:
-            print(f"     🔍 Acessando aba de notas do aluno {aluno_info['nome']}...")
+            print(f"     🔗 Acessando aba de notas...")
             
-            # Usar o XPath armazenado para o link de edição (ícone do lápis)
-            link_xpath = aluno_info["xpath_aba_notas"]
-            
-            # Aguardar o link estar presente
-            link_element = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, link_xpath))
+            # Clicar no botão da aba de notas
+            aba_notas_button = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, aluno_info["xpath_aba_notas"]))
             )
             
-            # Garantir que o elemento está visível na viewport usando JavaScript
-            print(f"     📍 Garantindo que o elemento está visível...")
-            self.driver.execute_script("""
-                arguments[0].scrollIntoView({behavior: 'instant', block: 'center', inline: 'center'});
-            """, link_element)
+            # Scroll até o elemento
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", aba_notas_button)
             time.sleep(0.5)
             
-            # Aguardar estar clicável
-            WebDriverWait(self.driver, 5).until(
-                EC.element_to_be_clickable((By.XPATH, link_xpath))
-            )
+            aba_notas_button.click()
             
-            # Clicar usando JavaScript (mais confiável)
-            print(f"     🖱️ Clicando no ícone do lápis...")
-            self.driver.execute_script("arguments[0].click();", link_element)
-            print(f"     ✅ Link clicado via JavaScript")
-            
-            # Aguardar modal abrir completamente
+            # Aguardar modal/aba carregar
             time.sleep(2)
             
-            # Verificar se a modal abriu
-            try:
-                WebDriverWait(self.driver, 5).until(
-                    EC.presence_of_element_located((By.ID, "modalDadosAtitudes"))
-                )
-                print(f"     ✅ Modal aberta")
-            except:
-                print(f"     ⚠️ Modal pode não ter aberto corretamente")
-            
+            print(f"     ✅ Aba de notas acessada")
             return True
             
         except Exception as e:
             print(f"     ❌ Erro ao acessar aba de notas: {str(e)}")
-            # Tentar capturar screenshot para debug
-            try:
-                self.driver.save_screenshot(f"debug_erro_clicar_aluno_{aluno_info['linha']}.png")
-                print(f"     📸 Screenshot salvo: debug_erro_clicar_aluno_{aluno_info['linha']}.png")
-            except:
-                pass
             return False
     
     def _preencher_observacoes_atitudes(self, opcao_atitude="Raramente"):
@@ -1776,6 +1699,10 @@ class SGNAutomation:
                         try:
                             select_element = self.driver.find_element(By.XPATH, select_xpath)
                             
+                            # Scroll até o elemento
+                            self.driver.execute_script("arguments[0].scrollIntoView(true);", select_element)
+                            time.sleep(0.2)
+                            
                             # Verificar valor atual usando JavaScript (select está oculto)
                             valor_atual = self.driver.execute_script("return arguments[0].value;", select_element)
                             print(f"       📋 Valor atual: {valor_atual}")
@@ -1797,18 +1724,22 @@ class SGNAutomation:
                             # Obter valor mapeado ou usar o valor original
                             valor_para_preencher = opcoes_mapeadas.get(opcao_atitude, opcao_atitude)
                             
-                            # Sempre usar JavaScript para garantir o preenchimento
-                            self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
-                            
-                            # Disparar evento change para atualizar a interface
-                            self.driver.execute_script("""
-                                var event = new Event('change', { bubbles: true });
-                                arguments[0].dispatchEvent(event);
-                            """, select_element)
-                            
-                            print(f"       ✓ Atitude {i+1}: '{opcao_atitude}' selecionado (JavaScript)")
-                            atitudes_preenchidas += 1
-                            time.sleep(0.3)  # Reduzido para agilizar
+                            if valor_atual != valor_para_preencher:
+                                # Usar JavaScript para alterar o valor do select oculto
+                                self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
+                                
+                                # Disparar evento change para atualizar a interface
+                                self.driver.execute_script("""
+                                    var event = new Event('change', { bubbles: true });
+                                    arguments[0].dispatchEvent(event);
+                                """, select_element)
+                                
+                                print(f"       ✓ Atitude {i+1}: '{opcao_atitude}' selecionado (JavaScript)")
+                                atitudes_preenchidas += 1
+                                time.sleep(0.5)  # Aguardar processamento
+                            else:
+                                print(f"       ✓ Atitude {i+1}: Já estava '{opcao_atitude}'")
+                                atitudes_preenchidas += 1
                             
                         except Exception as select_error:
                             print(f"       ❌ Erro ao selecionar '{opcao_atitude}' na linha {i+1}: {str(select_error)}")
@@ -1866,17 +1797,10 @@ class SGNAutomation:
                 total_linhas = len(linhas)
                 print(f"     📊 Encontradas {total_linhas} linhas de conceitos de habilidades")
                 
-                for i in range(len(linhas)):
+                for i, linha_element in enumerate(linhas):
                     try:
-                        # Re-buscar as linhas a cada iteração para evitar stale element
-                        linhas_atualizadas = self.driver.find_elements(By.XPATH, f"{tabela_habilidades_xpath}/tr[@data-ri]")
-                        if i >= len(linhas_atualizadas):
-                            print(f"       ⚠️ Linha {i+1} não encontrada após atualização")
-                            continue
-                            
-                        linha_element = linhas_atualizadas[i]
                         data_ri = linha_element.get_attribute("data-ri")
-                        print(f"       📝 Processando linha {i+1}/{len(linhas)} (data-ri={data_ri})")
+                        print(f"       📝 Processando linha {i+1} (data-ri={data_ri})")
                         
                         # Procurar select nativo diretamente usando o ID específico
                         select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
@@ -1884,6 +1808,10 @@ class SGNAutomation:
                         
                         try:
                             select_element = self.driver.find_element(By.XPATH, select_xpath)
+                            
+                            # Scroll até o elemento
+                            self.driver.execute_script("arguments[0].scrollIntoView(true);", select_element)
+                            time.sleep(0.2)
                             
                             # Verificar valor atual usando JavaScript (select está oculto)
                             valor_atual = self.driver.execute_script("return arguments[0].value;", select_element)
@@ -1910,18 +1838,22 @@ class SGNAutomation:
                                 print(f"       ⚠️ Valor inválido: '{opcao_conceito}'. Usando 'B' como padrão.")
                                 valor_para_preencher = "B"
                             
-                            # Sempre usar JavaScript para garantir o preenchimento
-                            self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
-                            
-                            # Disparar evento change para atualizar a interface
-                            self.driver.execute_script("""
-                                var event = new Event('change', { bubbles: true });
-                                arguments[0].dispatchEvent(event);
-                            """, select_element)
-                            
-                            print(f"       ✓ Habilidade {i+1}: '{valor_para_preencher}' selecionado (JavaScript)")
-                            habilidades_preenchidas += 1
-                            time.sleep(0.3)  # Reduzido para agilizar
+                            if valor_atual != valor_para_preencher:
+                                # Usar JavaScript para alterar o valor do select oculto
+                                self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
+                                
+                                # Disparar evento change para atualizar a interface
+                                self.driver.execute_script("""
+                                    var event = new Event('change', { bubbles: true });
+                                    arguments[0].dispatchEvent(event);
+                                """, select_element)
+                                
+                                print(f"       ✓ Habilidade {i+1}: '{valor_para_preencher}' selecionado (JavaScript)")
+                                habilidades_preenchidas += 1
+                                time.sleep(0.5)  # Aguardar processamento
+                            else:
+                                print(f"       ✓ Habilidade {i+1}: Já estava '{valor_para_preencher}'")
+                                habilidades_preenchidas += 1
                             
                         except Exception as select_error:
                             print(f"       ❌ Erro ao selecionar '{opcao_conceito}' na linha {i+1}: {str(select_error)}")
@@ -1944,7 +1876,6 @@ class SGNAutomation:
         """
         Fecha a modal de conceitos/atitudes usando ESC
         O sistema salva automaticamente, então só precisa fechar a modal
-        Aguarda a modal fechar completamente antes de retornar
         
         Returns:
             bool: True se conseguiu fechar, False caso contrário
@@ -1957,31 +1888,8 @@ class SGNAutomation:
                 from selenium.webdriver.common.keys import Keys
                 body = self.driver.find_element(By.TAG_NAME, "body")
                 body.send_keys(Keys.ESCAPE)
-                
-                # Aguardar modal fechar completamente
-                time.sleep(1.5)
-                
-                # Verificar se a modal realmente fechou
-                try:
-                    modal_visivel = self.driver.execute_script("""
-                        var modal = document.getElementById('modalDadosAtitudes');
-                        return modal && modal.style.display !== 'none' && modal.offsetParent !== null;
-                    """)
-                    
-                    if modal_visivel:
-                        print(f"     ⚠️ Modal ainda visível, tentando fechar via JavaScript...")
-                        self.driver.execute_script("""
-                            var modal = document.getElementById('modalDadosAtitudes');
-                            if (modal) {
-                                modal.style.display = 'none';
-                                modal.setAttribute('aria-hidden', 'true');
-                            }
-                        """)
-                        time.sleep(0.5)
-                except:
-                    pass
-                
                 print(f"     ✅ Modal fechada com ESC (salvamento automático)")
+                time.sleep(1)
                 return True
             except Exception as esc_error:
                 print(f"     ⚠️ ESC não funcionou, tentando botão de fechar...")
@@ -2017,22 +1925,6 @@ class SGNAutomation:
                     
                 except:
                     continue
-            
-            # Se nenhum método funcionou, tentar forçar via JavaScript
-            print(f"     ⚠️ Tentando fechar modal via JavaScript como último recurso...")
-            try:
-                self.driver.execute_script("""
-                    var modal = document.getElementById('modalDadosAtitudes');
-                    if (modal) {
-                        modal.style.display = 'none';
-                        modal.setAttribute('aria-hidden', 'true');
-                    }
-                """)
-                time.sleep(0.5)
-                print(f"     ✅ Modal fechada via JavaScript")
-                return True
-            except:
-                pass
             
             # Se não encontrou botão, tenta ESC
             print(f"     ⚠️ Botão voltar não encontrado, tentando ESC")
@@ -2121,39 +2013,59 @@ class SGNAutomation:
     def _coletar_configuracao_conceitos(self):
         """
         Retorna informações dos cabeçalhos da tabela de conceitos (AV1, RP1, etc.)
+        
+        Estrutura HTML:
+        <th id="...avaliacoes:0" aria-label="AV1">
+            <span class="ui-column-title">
+                <span title="06/08/2025 - Avaliação 03...">AV1</span>
+            </span>
+        </th>
         """
         resultado = {"identificadores": [], "tooltip": {}}
 
         try:
-            base_head_xpath = "//thead[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_head']/tr/th"
+            # Buscar TODOS os <th> que têm aria-label começando com AV ou RP
+            base_head_xpath = "//thead[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_head']/tr/th[@aria-label]"
             cabecalhos = self.driver.find_elements(By.XPATH, base_head_xpath)
+            
+            print(f"     🔍 Analisando {len(cabecalhos)} cabeçalhos da tabela...")
 
-            for th in cabecalhos:
-                aria = th.get_attribute("aria-label")
-                if not aria:
-                    continue
-                texto = aria.strip()
-                if not texto:
-                    continue
-
-                identificador = texto.split(" ")[0].upper()
-                if not identificador.startswith(("AV", "RP")):
-                    continue
-
-                resultado["identificadores"].append(identificador)
-
+            for idx, th in enumerate(cabecalhos):
                 try:
-                    tooltip_span = th.find_element(By.TAG_NAME, "span")
-                    tooltip = tooltip_span.get_attribute("title") or ""
-                    info = self._extrair_info_tooltip(tooltip)
-                    resultado["tooltip"][identificador] = info
-                except:
-                    resultado["tooltip"][identificador] = {}
+                    # Ler o aria-label (contém o identificador: AV1, AV2, RP2, etc.)
+                    aria = th.get_attribute("aria-label")
+                    if not aria:
+                        continue
+                    
+                    identificador = aria.strip().upper()
+                    
+                    # Filtrar apenas AV* e RP*
+                    if not identificador.startswith(("AV", "RP")):
+                        continue
 
-            print(f"     ✓ Encontrados {len(resultado['identificadores'])} cabeçalhos de avaliação")
+                    resultado["identificadores"].append(identificador)
+                    
+                    # Tentar extrair tooltip (informações adicionais)
+                    try:
+                        tooltip_span = th.find_element(By.CSS_SELECTOR, "span[title]")
+                        tooltip = tooltip_span.get_attribute("title") or ""
+                        info = self._extrair_info_tooltip(tooltip)
+                        resultado["tooltip"][identificador] = info
+                        print(f"        ✓ {identificador}: {info.get('titulo', 'Sem título')}")
+                    except:
+                        resultado["tooltip"][identificador] = {}
+                        print(f"        ✓ {identificador}: (sem tooltip)")
+                        
+                except Exception as e:
+                    print(f"        ⚠️ Erro ao processar cabeçalho {idx}: {e}")
+                    continue
+
+            print(f"     ✅ Encontrados {len(resultado['identificadores'])} cabeçalhos: {resultado['identificadores']}")
 
         except Exception as e:
-            print(f"   ⚠️ Erro ao capturar cabeçalhos de conceitos: {e}")
+            print(f"   ❌ Erro ao capturar cabeçalhos de conceitos: {e}")
+            import traceback
+            traceback.print_exc()
 
         return resultado
 
@@ -2209,7 +2121,7 @@ class SGNAutomation:
                     EC.element_to_be_clickable((By.XPATH, aba_xpath))
                 )
                 aba.click()
-                time.sleep(1)  # Otimizado: 2s → 1s
+                time.sleep(2)
                 print("     ✓ Aba Aulas/Avaliações acessada")
             except:
                 print("     ⚠️ Não foi possível acessar aba Aulas/Avaliações")
@@ -2225,7 +2137,7 @@ class SGNAutomation:
                 # Verificar se já está expandido
                 if "ui-state-active" not in painel.get_attribute("class"):
                     painel.click()
-                    time.sleep(1)  # Otimizado: 2s → 1s (expandir painel)
+                    time.sleep(2)  # Aguardar expandir
                 print("     ✓ Painel de Avaliação expandido")
             except Exception as e:
                 print(f"     ⚠️ Erro ao expandir painel: {e}")
@@ -2237,13 +2149,13 @@ class SGNAutomation:
                     )
                     if "ui-state-active" not in painel_alt.get_attribute("class"):
                         painel_alt.click()
-                        time.sleep(1)  # Otimizado: 2s → 1s
+                        time.sleep(2)
                         print("     ✓ Painel expandido (xpath alternativo)")
                 except:
                     print("     ❌ Não foi possível expandir painel")
 
             # Aguardar tabela carregar
-            time.sleep(1)  # Otimizado: 1s → 0.5s
+            time.sleep(1)
             
             # LER TABELA DE AVALIAÇÕES - XPATH ESPECÍFICO
             tabela_xpath_especifico = "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/div/div[3]/form/div/div/div[2]/div[2]/div[2]"
@@ -2384,52 +2296,125 @@ class SGNAutomation:
     def _construir_mapeamento_avaliacoes(self, cabecalhos, dados_avaliacoes, dados_recuperacoes):
         """
         Unifica informações de cabeçalho + listagens (AV/RP) + habilidades
-        IMPORTANTE: Agora coleta habilidades DIRETAMENTE da modal, não depende dos cabeçalhos
+        
+        IMPORTANTE: O SGN renumera as avaliações sequencialmente por trimestre:
+        - TR1: AV1, AV2, AV3, RP1, RP2
+        - TR2: AV1, AV2, RP1 (renumeração reinicia!)
+        
+        Estratégia: Mapear pelo tooltip (data + título) para fazer match correto
         """
-        colunas = {ident: idx for idx, ident in enumerate(cabecalhos["identificadores"])}
-        habilidades = {}
-        recuperacao_por_av = {}
-
-        for rec_id, rec_info in dados_recuperacoes.items():
-            origem = rec_info.get("origem")
-            if origem and origem in colunas:
-                recuperacao_por_av[origem] = rec_id
-
-        # COLETAR HABILIDADES DE TODAS AS AVALIAÇÕES (não depende dos cabeçalhos)
         print(f"   🔍 Construindo mapeamento de avaliações...")
+        print(f"   📋 DEBUG: cabecalhos completo = {cabecalhos}")
+        print(f"   📋 Cabeçalhos da tabela: {cabecalhos['identificadores']}")
+        
+        # VERIFICAÇÃO CRÍTICA: Se não há cabeçalhos, não é possível mapear
+        if not cabecalhos.get("identificadores") or len(cabecalhos["identificadores"]) == 0:
+            print(f"   ❌ ERRO: Nenhum cabeçalho encontrado na tabela de conceitos!")
+            print(f"   ℹ️  Isso pode acontecer se:")
+            print(f"      1. O trimestre selecionado não tem avaliações")
+            print(f"      2. A tabela ainda não carregou completamente")
+            print(f"      3. O XPath de coleta de cabeçalhos está incorreto")
+            return {
+                "colunas": {},
+                "habilidades": {},
+                "recuperacao_por_avaliacao": {},
+            }
+        
+        # Extrair informações dos tooltips dos cabeçalhos
+        tooltip_map = {}  # {identificador_cabecalho: (data, titulo)}
+        for ident_cabecalho in cabecalhos["identificadores"]:
+            tooltip = cabecalhos.get("tooltip", {}).get(ident_cabecalho, {})
+            print(f"   🔍 DEBUG: {ident_cabecalho} → tooltip = {tooltip}")
+            
+            # Tooltip pode ser dict ou string
+            if isinstance(tooltip, dict):
+                data = tooltip.get("data", "")
+                titulo = tooltip.get("titulo", "")
+                if data and titulo:
+                    tooltip_map[ident_cabecalho] = (data, titulo)
+                    print(f"   📋 {ident_cabecalho}: {data} - {titulo}")
+            elif isinstance(tooltip, str) and " - " in tooltip:
+                partes = tooltip.split(" - ")
+                if len(partes) >= 2:
+                    data = partes[0].strip()
+                    titulo = partes[1].strip()
+                    tooltip_map[ident_cabecalho] = (data, titulo)
+                    print(f"   📋 {ident_cabecalho}: {data} - {titulo}")
+        
+        # Mapear avaliações para cabeçalhos
+        colunas = {}  # {identificador_cabecalho: indice_coluna}
+        habilidades = {}  # {identificador_cabecalho: [habilidades]}
+        av_original_para_cabecalho = {}  # {AV4: AV1, AV5: AV2}
         
         for av_info in dados_avaliacoes:
-            ident = av_info["identificador"]
-            titulo = av_info.get("titulo", "")
+            ident_original = av_info["identificador"]
+            data_av = av_info.get("data", "")
+            titulo_av = av_info.get("titulo", "")
             
-            # SEMPRE coletar habilidades, independente de estar nos cabeçalhos
-            habilidades_coletadas = self._coletar_habilidades_modal(av_info)
-            habilidades[ident] = habilidades_coletadas
+            # Buscar match pelo (data, titulo)
+            # IMPORTANTE: O título pode ter sufixos extras (ex: "Avaliação 01 - SGBD")
+            # mas o cabeçalho pode ter apenas "Avaliação 01"
+            ident_cabecalho_match = None
+            for ident_cabecalho, (data_cab, titulo_cab) in tooltip_map.items():
+                # Match exato
+                if data_av == data_cab and titulo_av == titulo_cab:
+                    ident_cabecalho_match = ident_cabecalho
+                    break
+                # Match parcial: título do cabeçalho está contido no título da avaliação
+                elif data_av == data_cab and titulo_cab in titulo_av:
+                    ident_cabecalho_match = ident_cabecalho
+                    print(f"   ℹ️  Match parcial: '{titulo_av}' contém '{titulo_cab}'")
+                    break
             
-            # VALIDAÇÃO CRÍTICA: PARAR SE NÃO ENCONTROU HABILIDADES
-            if not habilidades_coletadas or len(habilidades_coletadas) == 0:
-                erro_msg = (
-                    f"\n\n"
-                    f"="*80 + "\n"
-                    f"❌ ERRO CRÍTICO: AVALIAÇÃO SEM HABILIDADES/CAPACIDADES\n"
-                    f"="*80 + "\n"
-                    f"Avaliação: {ident} - {titulo}\n"
-                    f"Data: {av_info.get('data', 'N/A')}\n"
-                    f"Média de Referência: TR{av_info.get('mr', 'N/A')}\n"
-                    f"\n"
-                    f"ℹ️  IMPORTANTE:\n"
-                    f"   Todas as avaliações devem ter habilidades vinculadas para o\n"
-                    f"   lançamento inteligente funcionar corretamente.\n"
-                    f"="*80 + "\n"
-                )
-                print(erro_msg)
-                raise Exception(f"Avaliação '{ident} - {titulo}' não possui habilidades/capacidades vinculadas. Adicione habilidades no SGN antes de continuar.")
+            if ident_cabecalho_match:
+                idx_coluna = cabecalhos["identificadores"].index(ident_cabecalho_match)
+                colunas[ident_cabecalho_match] = idx_coluna
+                av_original_para_cabecalho[ident_original] = ident_cabecalho_match
+                print(f"   ✓ Match: {ident_original} ({titulo_av}) → {ident_cabecalho_match} (coluna {idx_coluna})")
+                
+                # SEMPRE coletar habilidades
+                habilidades_coletadas = self._coletar_habilidades_modal(av_info)
+                habilidades[ident_cabecalho_match] = habilidades_coletadas
+                
+                # AVISO: Se não há habilidades, o conceito padrão será usado
+                if not habilidades_coletadas or len(habilidades_coletadas) == 0:
+                    print(f"   ⚠️ {ident_original} não tem habilidades vinculadas - usará conceito padrão")
+            else:
+                print(f"   ⚠️ {ident_original} ({data_av} - {titulo_av}) não encontrado nos cabeçalhos (trimestre diferente)")
+                continue
+        
+        # Mapear recuperações para cabeçalhos
+        recuperacao_por_av = {}  # {identificador_cabecalho_av: identificador_cabecalho_rp}
+        
+        for rec_id, rec_info in dados_recuperacoes.items():
+            data_rec = rec_info.get("data", "")
+            titulo_rec = rec_info.get("titulo", "")
+            origem = rec_info.get("origem")  # Ex: "AV5"
+            
+            # Buscar match pelo (data, titulo)
+            ident_cabecalho_rec = None
+            for ident_cabecalho, (data_cab, titulo_cab) in tooltip_map.items():
+                if data_rec == data_cab and titulo_rec == titulo_cab:
+                    ident_cabecalho_rec = ident_cabecalho
+                    break
+            
+            if ident_cabecalho_rec:
+                idx_coluna = cabecalhos["identificadores"].index(ident_cabecalho_rec)
+                colunas[ident_cabecalho_rec] = idx_coluna
+                print(f"   ✓ Match: {rec_id} ({titulo_rec}) → {ident_cabecalho_rec} (coluna {idx_coluna})")
+                
+                # Mapear recuperação para a avaliação de origem
+                if origem and origem in av_original_para_cabecalho:
+                    ident_cabecalho_origem = av_original_para_cabecalho[origem]
+                    recuperacao_por_av[ident_cabecalho_origem] = ident_cabecalho_rec
+                    print(f"   🔗 Recuperação: {ident_cabecalho_rec} substitui {ident_cabecalho_origem}")
+            else:
+                print(f"   ⚠️ {rec_id} ({data_rec} - {titulo_rec}) não encontrado nos cabeçalhos (trimestre diferente)")
 
         resultado = {
             "colunas": colunas,
             "habilidades": habilidades,
             "recuperacao_por_avaliacao": recuperacao_por_av,
-            "cabecalhos": cabecalhos["identificadores"],  # Adicionar cabeçalhos ao resultado
         }
         
         total_habilidades = sum(len(h) for h in habilidades.values())
@@ -2468,9 +2453,7 @@ class SGNAutomation:
             if habilidades_av and len(habilidades_av) > 0:
                 print(f"      🎯 Habilidades vinculadas ({len(habilidades_av)}):")
                 for hab in habilidades_av:
-                    # Limpar asterisco e espaços extras para exibição
-                    habilidade_limpa = self._limpar_texto_habilidade(hab['habilidade'])
-                    habilidade_curta = habilidade_limpa[:70] + "..." if len(habilidade_limpa) > 70 else habilidade_limpa
+                    habilidade_curta = hab['habilidade'][:70] + "..." if len(hab['habilidade']) > 70 else hab['habilidade']
                     print(f"         • {habilidade_curta}")
             else:
                 print(f"      ❌ NENHUMA HABILIDADE VINCULADA - Esta avaliação não será usada!")
@@ -2511,81 +2494,90 @@ class SGNAutomation:
             print(f"\n       🔍 Abrindo modal da {identificador}...")
             print(f"       📍 Linha: {indice_linha}, data-ri: {data_ri}")
             
-            # CLICAR NO ÍCONE DO LÁPIS (AÇÃO) - XPath específico para o <i> dentro do <a>
-            # Formato: /html/body/.../tbody/tr[N]/td[2]/a/i (para primeira linha)
-            #          /html/body/.../tbody/tr[N]/td[2]/a[1]/i (para demais linhas)
+            # CLICAR NO LINK DO LÁPIS USANDO O ID DO PRIMEFACES
+            # O PrimeFaces gera IDs únicos: tabViewDiarioClasse:formAbaAulasAvaliacoes:panelAvaliacao:avaliacoesDataTable:0:aulasAvaliacao
+            link_id = f"tabViewDiarioClasse:formAbaAulasAvaliacoes:panelAvaliacao:avaliacoesDataTable:{data_ri}:aulasAvaliacao"
             
-            # XPath para o ícone (tag <i>) - mais específico
-            if indice_linha == 1:
-                # Primeira linha: /tr[1]/td[2]/a/i
-                icone_lapis_xpath = f"/html/body/div[3]/div[3]/div[2]/div[2]/div/div/div/div[3]/form/div/div/div[2]/div[2]/div[2]/div/div[1]/table/tbody/tr[{indice_linha}]/td[2]/a/i"
-            else:
-                # Demais linhas: /tr[N]/td[2]/a[1]/i
-                icone_lapis_xpath = f"/html/body/div[3]/div[3]/div[2]/div[2]/div/div/div/div[3]/form/div/div/div[2]/div[2]/div[2]/div/div[1]/table/tbody/tr[{indice_linha}]/td[2]/a[1]/i"
+            # Fallback usando data-ri
+            link_xpath_fallback = f"//tbody[@id='tabViewDiarioClasse:formAbaAulasAvaliacoes:panelAvaliacao:avaliacoesDataTable_data']/tr[@data-ri='{data_ri}']/td[2]/a[1]"
             
-            # Fallback: clicar no <a> usando data-ri
-            link_lapis_xpath_fallback = f"//tbody[@id='tabViewDiarioClasse:formAbaAulasAvaliacoes:panelAvaliacao:avaliacoesDataTable_data']/tr[@data-ri='{data_ri}']/td[2]/a[1]"
-            
-            print(f"       🎯 Tentando clicar no ícone do lápis...")
-            print(f"       XPath: {icone_lapis_xpath}")
+            print(f"       🎯 Clicando no lápis (ID: {link_id})...")
             
             try:
-                # Tentar clicar no ícone <i> primeiro (mais preciso)
+                # MÉTODO 1: Usar ID do PrimeFaces (mais confiável)
                 try:
-                    icone_lapis = self.driver.find_element(By.XPATH, icone_lapis_xpath)
-                    print(f"       ✓ Ícone do lápis encontrado")
-                    
-                    # Scroll até o elemento
-                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", icone_lapis)
-                    time.sleep(0.5)  # Otimizado: 0.5s → 0.3s
-                    
-                    # SEMPRE usar JavaScript (mais confiável para PrimeFaces)
-                    self.driver.execute_script("arguments[0].click();", icone_lapis)
-                    print(f"       ✓ Ícone clicado via JavaScript")
-                    
-                except Exception as e_icone:
-                    print(f"       ⚠️ Não encontrou ícone: {e_icone}")
-                    print(f"       🔄 Tentando clicar no link <a> (fallback)...")
-                    
-                    # Fallback: clicar no link <a> via JavaScript
-                    link_lapis = self.driver.find_element(By.XPATH, link_lapis_xpath_fallback)
+                    link_lapis = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((By.ID, link_id))
+                    )
+                    print(f"       ✓ Link encontrado (por ID)")
                     self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link_lapis)
-                    time.sleep(0.5)  # Otimizado: 0.5s → 0.3s
+                    time.sleep(0.5)
                     self.driver.execute_script("arguments[0].click();", link_lapis)
-                    print(f"       ✓ Link clicado via JavaScript (fallback)")
+                    print(f"       ✓ Lápis clicado via JavaScript")
+                    
+                except Exception as e_id:
+                    print(f"       ⚠️ Falha ao usar ID: {e_id}")
+                    print(f"       🔄 Tentando XPath (fallback)...")
+                    
+                    # MÉTODO 2: Fallback com XPath
+                    link_lapis = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((By.XPATH, link_xpath_fallback))
+                    )
+                    print(f"       ✓ Link encontrado (por XPath)")
+                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link_lapis)
+                    time.sleep(0.5)
+                    self.driver.execute_script("arguments[0].click();", link_lapis)
+                    print(f"       ✓ Lápis clicado via JavaScript (fallback)")
                 
-                time.sleep(1)  # Otimizado: 1s → 0.5s (AJAX iniciar)
-                print(f"       ✅ Lápis (ação) clicado com sucesso!")
+                time.sleep(2)  # Aguardar AJAX do PrimeFaces
+                print(f"       ✅ Modal sendo carregada...")
                 
             except Exception as e:
                 print(f"       ❌ ERRO ao clicar no lápis: {e}")
-                print(f"       ℹ️ Tentando capturar screenshot para debug...")
                 try:
                     self.driver.save_screenshot(f"erro_lapis_{identificador}.png")
-                    print(f"       📸 Screenshot salvo: erro_lapis_{identificador}.png")
+                    print(f"       📸 Screenshot: erro_lapis_{identificador}.png")
                 except:
                     pass
                 return habilidades
             
-            # AGUARDAR MODAL CARREGAR (PrimeFaces retorna XML via AJAX)
-            print(f"       ⏳ Aguardando modal carregar...")
+            # AGUARDAR MODAL CARREGAR (PrimeFaces carrega em 2 etapas via AJAX)
+            print(f"       ⏳ Aguardando modal carregar (2 etapas AJAX)...")
             try:
-                # Aguardar modal aparecer
+                # ETAPA 1: Aguardar modal aparecer (primeira requisição AJAX)
                 WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located((By.ID, "modalAvaliacao"))
                 )
-                time.sleep(1)  # Otimizado: 1s → 0.5s
+                print(f"       ✓ Modal apareceu (etapa 1)")
+                time.sleep(1)
                 
-                # Aguardar tabela de habilidades estar presente (mesmo que vazia/oculta)
+                # ETAPA 2: Aguardar conteúdo carregar (segunda requisição AJAX com modalAvaliacao_contentLoad=true)
+                # Aguardar o formulário aparecer dentro da modal
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.ID, "formModalAvaliacao"))
+                )
+                print(f"       ✓ Formulário carregado (etapa 2)")
+                time.sleep(1)
+                
+                # ETAPA 3: Aguardar tabela de habilidades estar presente
                 WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located(
                         (By.ID, "formModalAvaliacao:tabViewModalAvaliacao:painelTabelaHabilidade:tabelaHabilidade")
                     )
                 )
-                time.sleep(1)  # Otimizado: 1s → 0.5s
-                print(f"       ✓ Modal aberta e conteúdo carregado")
+                print(f"       ✓ Tabela de habilidades presente")
+                time.sleep(1)
+                
+                # ETAPA 4: Aguardar o label da média de referência estar presente
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located(
+                        (By.ID, "formModalAvaliacao:tabViewModalAvaliacao:mediaReferencia_label")
+                    )
+                )
+                print(f"       ✅ Modal completamente carregada!")
+                
             except Exception as e:
-                print(f"       ❌ Modal não abriu ou conteúdo não carregou: {e}")
+                print(f"       ❌ Modal não carregou completamente: {e}")
                 return habilidades
 
             # COLETAR MÉDIA DE REFERÊNCIA - XPATH ESPECÍFICO
@@ -2611,46 +2603,29 @@ class SGNAutomation:
                 media_referencia = None
 
             # LER TABELA DE HABILIDADES - XPATH ESPECÍFICO
-            # XPath da div container: /html/body/div[3]/div[3]/div[2]/div[19]/div[2]/form/div/div/div[1]/div/div/div[5]/div[2]/div/div[2]/div[4]/div
+            # XPath: /html/body/div[3]/div[3]/div[2]/div[19]/div[2]/form/div/div/div[1]/div/div/div[5]/div[2]/div/div[2]/div[4]/div[1]
             print(f"       📋 Lendo tabela de Habilidades...")
             
             try:
-                # 1. Verificar se painel de habilidades está expandido
+                # Verificar se painel de habilidades está expandido
                 painel_hab_xpath = "//div[@id='formModalAvaliacao:tabViewModalAvaliacao:painelTabelaHabilidade']//div[contains(@class, 'ui-accordion-header')]"
                 try:
                     painel_hab = self.driver.find_element(By.XPATH, painel_hab_xpath)
                     if "ui-state-active" not in painel_hab.get_attribute("class"):
-                        print(f"       🔽 Expandindo painel de Habilidades...")
                         painel_hab.click()
-                        time.sleep(1)  # Otimizado: 1s → 0.5s
+                        time.sleep(1)
                         print(f"       ✓ Painel de Habilidades expandido")
-                    else:
-                        print(f"       ✓ Painel de Habilidades já está expandido")
-                except Exception as e:
-                    print(f"       ⚠️ Erro ao verificar painel: {e}")
-                
-                # 2. Aguardar tabela carregar
-                time.sleep(1)  # Otimizado: 1s → 0.5s
-                
-                # 3. Ler linhas da tabela de habilidades
-                # XPath específico da tabela
-                tabela_habilidades_xpath_especifico = "/html/body/div[3]/div[3]/div[2]/div[19]/div[2]/form/div/div/div[1]/div/div/div[5]/div[2]/div/div[2]/div[4]/div"
-                tbody_habilidades_xpath = "//tbody[@id='formModalAvaliacao:tabViewModalAvaliacao:painelTabelaHabilidade:tabelaHabilidade_data']/tr[@data-ri]"
-                
-                # Tentar localizar a tabela primeiro
-                try:
-                    tabela_container = self.driver.find_element(By.XPATH, tabela_habilidades_xpath_especifico)
-                    print(f"       ✓ Container da tabela encontrado")
                 except:
-                    print(f"       ⚠️ Container específico não encontrado, usando xpath genérico")
+                    pass  # Já pode estar expandido
                 
+                # Aguardar tabela carregar
+                time.sleep(1)
+                
+                # Ler linhas da tabela de habilidades
+                tbody_habilidades_xpath = "//tbody[@id='formModalAvaliacao:tabViewModalAvaliacao:painelTabelaHabilidade:tabelaHabilidade_data']/tr[@data-ri]"
                 linhas_hab = self.driver.find_elements(By.XPATH, tbody_habilidades_xpath)
                 
                 print(f"       ✓ Encontradas {len(linhas_hab)} habilidades vinculadas")
-                
-                if len(linhas_hab) == 0:
-                    print(f"       ⚠️ ATENÇÃO: Tabela de habilidades está vazia!")
-                    print(f"       ℹ️ Verifique se a avaliação possui habilidades cadastradas no SGN.")
 
                 for linha_hab in linhas_hab:
                     try:
@@ -2696,27 +2671,58 @@ class SGNAutomation:
                 print(f"       ℹ️ Esta avaliação precisa ter habilidades cadastradas no SGN.")
                 # Não lançar exceção aqui, será tratado no _construir_mapeamento_avaliacoes
 
-            # Fechar modal
+            # FECHAR MODAL - XPATH ESPECÍFICO DO BOTÃO DE FECHAR
+            print(f"       🔒 Fechando modal...")
             try:
-                self.driver.execute_script("PF('modalAvaliacao').hide();")
-                time.sleep(1)
-                print(f"       ✓ Modal fechada")
-            except:
+                # XPath específico: /html/body/div[3]/div[3]/div[2]/div[19]/div[1]/a/span
+                fechar_btn_xpath = "/html/body/div[3]/div[3]/div[2]/div[19]/div[1]/a/span"
+                
+                # Tentar xpath específico primeiro
                 try:
-                    fechar_btn = self.driver.find_element(By.XPATH, "//div[@id='modalAvaliacao']//a[contains(@class, 'ui-dialog-titlebar-close')]")
-                    fechar_btn.click()
-                    time.sleep(1)
+                    fechar_span = self.driver.find_element(By.XPATH, fechar_btn_xpath)
+                    fechar_span.click()
+                    print(f"       ✓ Modal fechada (xpath específico)")
                 except:
-                    pass
+                    # Fallback: tentar via JavaScript
+                    try:
+                        self.driver.execute_script("PF('modalAvaliacao').hide();")
+                        print(f"       ✓ Modal fechada (JavaScript)")
+                    except:
+                        # Último fallback: clicar no botão de fechar genérico
+                        fechar_btn = self.driver.find_element(By.XPATH, "//div[@id='modalAvaliacao']//a[contains(@class, 'ui-dialog-titlebar-close')]")
+                        fechar_btn.click()
+                        print(f"       ✓ Modal fechada (fallback)")
+                
+                time.sleep(1)  # Aguardar modal fechar
+                
+            except Exception as e:
+                print(f"       ⚠️ Erro ao fechar modal: {e}")
 
         except Exception as e:
             print(f"     ⚠️ Erro ao coletar habilidades da modal: {e}")
 
         return habilidades
 
-    def _coletar_notas_aluno(self, aluno_info, cabecalhos_avaliacoes, mapa_colunas):
+    def _coletar_notas_aluno(self, aluno_info, mapa_colunas):
         """
         Lê os valores das AV/RP para o aluno na tabela principal de conceitos
+        
+        IMPORTANTE: O PrimeFaces renderiza os <select> via AJAX quando a modal é aberta.
+        Por isso, precisamos ler DIRETAMENTE o <option selected> do <select> oculto.
+        
+        Estrutura HTML (após renderização AJAX):
+        <select id="...j_idt1100_input">
+          <option value="">nbsp;</option>
+          <option value="B" selected="selected">B</option>  ← AQUI!
+        </select>
+        <label>&nbsp;</label>  ← Label é atualizado via JS, pode estar vazio
+        
+        Args:
+            aluno_info: Informações do aluno (nome, linha, data_ri)
+            mapa_colunas: Mapeamento de identificadores para índices de colunas
+        
+        Returns:
+            dict: Notas coletadas {identificador: valor}
         """
         notas = {}
         
@@ -2725,323 +2731,259 @@ class SGNAutomation:
             if data_ri is None:
                 data_ri = str(aluno_info["linha"] - 1)
 
-            base_xpath = f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{data_ri}']/td"
-            colunas = self.driver.find_elements(By.XPATH, base_xpath)
+            print(f"     🔍 Coletando notas da linha data-ri='{data_ri}'...")
+            print(f"     📋 Avaliações/Recuperações a coletar: {list(mapa_colunas.keys())}")
 
-            for ident, idx in mapa_colunas.items():
-                indice_coluna = idx + 3
-                if indice_coluna >= len(colunas):
-                    continue
-                    
-                celula = colunas[indice_coluna]
+            # Iterar sobre cada avaliação/recuperação mapeada
+            for ident, idx in sorted(mapa_colunas.items(), key=lambda x: x[1]):
+                indice_coluna = idx + 3  # +3: #, Ação, Estudante
+                
+                # XPATH para o <select> oculto
+                select_xpath = f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{data_ri}']/td[{indice_coluna + 1}]//select[contains(@id, '_input')]"
+                
                 try:
-                    select = celula.find_element(By.TAG_NAME, "select")
-                    valor = select.get_attribute("value") or ""
-                    notas[ident] = valor
-                except:
-                    label = celula.text.strip()
-                    notas[ident] = label if label and label != " " else ""
+                    select = self.driver.find_element(By.XPATH, select_xpath)
+                    
+                    # Verificar se está disabled
+                    if select.get_attribute("disabled"):
+                        notas[ident] = ""
+                        print(f"        🔒 {ident}: desabilitado (evadido/transferido)")
+                        continue
+                    
+                    # Buscar <option selected="selected">
+                    try:
+                        option = select.find_element(By.CSS_SELECTOR, "option[selected='selected']")
+                        valor = option.get_attribute("value") or ""
+                        
+                        # Filtrar valores vazios e &nbsp;
+                        if valor and valor.strip() and valor not in [" ", "\xa0"]:
+                            notas[ident] = valor.strip()
+                            print(f"        ✅ {ident}: '{valor}'")
+                        else:
+                            notas[ident] = ""
+                            print(f"        ⚪ {ident}: (vazio)")
+                    except:
+                        # Se não tem option selected, está vazio
+                        notas[ident] = ""
+                        print(f"        ⚪ {ident}: (vazio - sem option selected)")
+                        
+                except Exception as e:
+                    notas[ident] = ""
+                    print(f"        ❌ {ident}: erro ({str(e)[:50]})")
 
-            # Printar notas coletadas de forma detalhada
-            print(f"\n     📊 NOTAS COLETADAS DO ALUNO:")
-            print(f"     {'-'*60}")
-            if notas:
-                for av_id, nota in notas.items():
-                    nota_display = nota if nota else "(vazio)"
-                    print(f"     {av_id:10} = {nota_display}")
-            else:
-                print(f"     ⚠️ Nenhuma nota encontrada")
-            print(f"     {'-'*60}\n")
+            print(f"     📊 Resumo: {notas}")
 
         except Exception as e:
-            print(f"   ⚠️ Erro ao coletar notas do aluno: {e}")
+            print(f"   ⚠️ Erro ao coletar notas: {e}")
+            import traceback
+            traceback.print_exc()
 
         return notas
 
-    def _preencher_conceitos_habilidades_por_notas(self, notas_aluno, mapeamentos, conceito_padrao):
+    def _preencher_conceitos_habilidades_por_notas(self, notas_aluno, mapeamentos):
         """
         Aplica os conceitos de habilidades baseado nas notas das avaliações
+        
+        Para cada habilidade na modal:
+        1. Identifica a qual avaliação ela pertence
+        2. Busca a nota do aluno naquela avaliação
+        3. Se tem recuperação, usa a nota da recuperação
+        4. Se não encontrou mapeamento, deixa vazio
         """
         preenchidos = 0
 
         try:
-            print(f"     📝 Preenchendo conceitos de habilidades...")
+            print(f"     📝 Preenchendo conceitos de habilidades baseado nas notas...")
             
+            # Re-localizar a tabela para evitar stale element
             tabela_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']/tr[@data-ri]"
-            linhas = self.driver.find_elements(By.XPATH, tabela_xpath)
-            total_linhas = len(linhas)
-            print(f"     📊 Encontradas {total_linhas} habilidades para preencher")
+            linhas = WebDriverWait(self.driver, 5).until(
+                EC.presence_of_all_elements_located((By.XPATH, tabela_xpath))
+            )
+            
+            print(f"     📋 Total de habilidades encontradas: {len(linhas)}")
 
-            # Usar índice para evitar stale element
-            for i in range(total_linhas):
+            for idx, linha in enumerate(linhas):
                 try:
-                    # Re-buscar as linhas a cada iteração para evitar stale element
+                    # Re-localizar a linha para evitar stale element
                     linhas_atualizadas = self.driver.find_elements(By.XPATH, tabela_xpath)
-                    if i >= len(linhas_atualizadas):
-                        print(f"       ⚠️ Linha {i+1} não encontrada após atualização")
+                    if idx >= len(linhas_atualizadas):
                         continue
+                    linha = linhas_atualizadas[idx]
                     
-                    linha = linhas_atualizadas[i]
                     data_ri = linha.get_attribute("data-ri")
-                    print(f"\n       📝 Processando habilidade {i+1}/{total_linhas} (data-ri={data_ri})")
-
-                    try:
-                        cols = linha.find_elements(By.TAG_NAME, "td")
-                        if len(cols) < 3:
-                            print(f"       ⚠️ Linha {i+1} não tem colunas suficientes (encontradas: {len(cols)})")
-                            continue
-                            
-                        # Estrutura da tabela:
-                        # cols[0] = Competência (C10)
-                        # cols[1] = Habilidade (H4 - Selecionar linguagem...)
-                        # cols[2] = Conceito (dropdown)
-                        # cols[3] = Aplicar RA?
-                        
-                        competencia_texto = cols[0].text.strip()  # Coluna 0: Competência
-                        habilidade_texto = cols[1].text.strip()   # Coluna 1: Habilidade
-                        
-                        print(f"          📋 Competência: {competencia_texto}")
-                        print(f"          📋 Habilidade: {habilidade_texto[:80]}...")
-                        
-                    except Exception as col_error:
-                        print(f"       ⚠️ Erro ao ler colunas da linha {i+1}: {col_error}")
+                    cols = linha.find_elements(By.TAG_NAME, "td")
+                    
+                    if len(cols) < 3:
                         continue
-                except Exception as linha_error:
-                    print(f"       ❌ Erro ao processar linha {i+1}: {linha_error}")
+                        
+                    competencia_texto = cols[1].text.strip()
+                    habilidade_texto = cols[2].text.strip()
+                    
+                except Exception as e:
+                    print(f"       ⚠️ Erro ao ler linha {idx}: {e}")
                     continue
 
-                # Inicializar sem conceito padrão - DEVE encontrar correspondência
-                conceito = None
+                conceito = ""  # Vazio por padrão
                 av_utilizada = None
                 tipo_origem = None
                 
                 # Procurar em qual avaliação esta habilidade está vinculada
-                # IMPORTANTE: Uma habilidade pode estar em múltiplas avaliações
-                # Nesse caso, deve-se usar a MAIOR NOTA
-                encontrou_correspondencia = False
-                habilidade_limpa = self._limpar_texto_habilidade(habilidade_texto)
-                
-                print(f"\n          🔍 Buscando correspondência para: {habilidade_limpa[:70]}...")
-                print(f"          📊 Notas disponíveis do aluno: {notas_aluno}")
-                
-                # Lista para armazenar todas as notas encontradas para esta habilidade
-                notas_encontradas = []
-                
                 for av, habilidades_av in mapeamentos["habilidades"].items():
-                    for hab_av in habilidades_av:
-                        hab_av_limpa = self._limpar_texto_habilidade(hab_av["habilidade"])
-                        
-                        # Debug: mostrar comparação
-                        # print(f"             Comparando com {av}: {hab_av_limpa[:50]}...")
-                        
-                        if self._texto_corresponde(habilidade_limpa, hab_av_limpa):
-                            # Encontrou! Esta habilidade pertence a esta avaliação
-                            encontrou_correspondencia = True
-                            
-                            # Verificar se tem recuperação para esta avaliação (prioridade)
-                            recuperacao = mapeamentos["recuperacao_por_avaliacao"].get(av)
-                            if recuperacao:
-                                conceito_rec = notas_aluno.get(recuperacao, "")
-                                if conceito_rec:
-                                    notas_encontradas.append({
-                                        "conceito": conceito_rec,
-                                        "origem": recuperacao,
-                                        "tipo": "recuperação",
-                                        "av_base": av
-                                    })
-                                    continue  # Pula para próxima, RP tem prioridade
-                            
-                            # Se não tem RP, usar nota da avaliação
-                            conceito_av = notas_aluno.get(av, "")
-                            if conceito_av:
-                                notas_encontradas.append({
-                                    "conceito": conceito_av,
-                                    "origem": av,
-                                    "tipo": "avaliação",
-                                    "av_base": av
-                                })
-                            
-                            # NÃO fazer break aqui! Continuar procurando em outras avaliações
-                
-                # Se encontrou notas, escolher a MAIOR
-                if notas_encontradas:
-                    # Ordenar por conceito (A > B > C > D > E)
-                    notas_ordenadas = sorted(notas_encontradas, key=lambda x: x["conceito"])
-                    melhor_nota = notas_ordenadas[0]  # A primeira é a melhor (A vem antes de B)
-                    
-                    conceito = melhor_nota["conceito"]
-                    av_utilizada = melhor_nota["origem"]
-                    tipo_origem = melhor_nota["tipo"]
-                    
-                    print(f"          🔗 Habilidade encontrada em {len(notas_encontradas)} avaliação(ões)")
-                    print(f"             Modal: {habilidade_limpa[:50]}...")
-                    
-                    if len(notas_encontradas) > 1:
-                        print(f"          📊 Notas encontradas:")
-                        for nota in notas_encontradas:
-                            print(f"             - {nota['origem']}: {nota['conceito']} ({nota['tipo']})")
-                        print(f"          ⭐ Usando MAIOR nota: {conceito} da {av_utilizada} ({tipo_origem})")
-                    else:
-                        print(f"          📊 Nota da {av_utilizada}: {conceito} ({tipo_origem})")
-                
-                elif not encontrou_correspondencia:
-                    # ERRO CRÍTICO: Habilidade de avaliação não encontrada no modal
-                    
-                    # Listar todas as habilidades disponíveis nas avaliações para debug
-                    print(f"\n          ⚠️ HABILIDADES DISPONÍVEIS NAS AVALIAÇÕES:")
-                    for av_debug, habs_debug in mapeamentos["habilidades"].items():
-                        print(f"          {av_debug}:")
-                        for hab_debug in habs_debug:
-                            hab_debug_limpa = self._limpar_texto_habilidade(hab_debug["habilidade"])
-                            print(f"             • {hab_debug_limpa[:70]}...")
-                    
-                    erro_msg = (
-                        f"\n\n"
-                        f"="*80 + "\n"
-                        f"❌ ERRO CRÍTICO: HABILIDADE DO MODAL NÃO ENCONTRADA NAS AVALIAÇÕES\n"
-                        f"="*80 + "\n"
-                        f"Habilidade do modal: {habilidade_limpa}\n"
-                        f"Competência: {competencia_texto}\n"
-                        f"\n"
-                        f"ℹ️  IMPORTANTE:\n"
-                        f"   Esta habilidade aparece no modal do aluno, mas NÃO foi encontrada\n"
-                        f"   em nenhuma avaliação cadastrada na turma.\n"
-                        f"   \n"
-                        f"   No modo INTELIGENTE, TODAS as habilidades do modal devem estar\n"
-                        f"   vinculadas a pelo menos uma avaliação.\n"
-                        f"   \n"
-                        f"   Verifique se:\n"
-                        f"   1. A habilidade está vinculada a alguma avaliação no SGN\n"
-                        f"   2. O texto da habilidade é idêntico em ambos os lugares\n"
-                        f"   3. A avaliação foi cadastrada corretamente\n"
-                        f"="*80 + "\n"
-                    )
-                    print(erro_msg)
-                    raise Exception(f"Habilidade '{habilidade_limpa[:60]}...' do modal não está vinculada a nenhuma avaliação. Vincule a habilidade a uma avaliação no SGN.")
+                    if any(self._texto_corresponde(habilidade_texto, h["habilidade"]) for h in habilidades_av):
+                        # Encontrou! Esta habilidade pertence a esta avaliação
+                        conceito_av = notas_aluno.get(av, "")
+                        if conceito_av:
+                            conceito = conceito_av
+                            av_utilizada = av
+                            tipo_origem = "avaliação"
 
-                # VALIDAÇÃO: Se não encontrou correspondência, NÃO preencher
-                if conceito is None or av_utilizada is None:
-                    # Já foi tratado no bloco elif acima com raise Exception
-                    continue
-                
+                        # Verificar se tem recuperação para esta avaliação
+                        recuperacao = mapeamentos["recuperacao_por_avaliacao"].get(av)
+                        if recuperacao:
+                            conceito_rec = notas_aluno.get(recuperacao, "")
+                            if conceito_rec:
+                                conceito = conceito_rec
+                                av_utilizada = recuperacao
+                                tipo_origem = "recuperação"
+
+                        break
+
                 # Preparar mensagem detalhada
-                habilidade_curta = habilidade_texto[:60] if len(habilidade_texto) > 60 else habilidade_texto
+                habilidade_curta = habilidade_texto[:50] if len(habilidade_texto) > 50 else habilidade_texto
                 
-                print(f"       📌 {habilidade_curta}")
-                print(f"          ✅ Lançando: {conceito} (origem: {av_utilizada} - {tipo_origem})")
+                if av_utilizada and conceito:
+                    print(f"       📌 Habilidade: {habilidade_curta}")
+                    print(f"          🔗 Vinculada à: {av_utilizada} ({tipo_origem})")
+                    print(f"          📊 Nota do aluno: '{conceito}'")
+                elif av_utilizada and not conceito:
+                    print(f"       📌 Habilidade: {habilidade_curta}")
+                    print(f"          🔗 Vinculada à: {av_utilizada}")
+                    print(f"          ⚪ Aluno não tem nota (deixando vazio)")
+                    continue  # Pula, não preenche nada
+                else:
+                    print(f"       📌 Habilidade: {habilidade_curta}")
+                    print(f"          ⚠️ Não encontrada em nenhuma avaliação (deixando vazio)")
+                    continue  # Pula, não preenche nada
 
+                # Aplicar o conceito
                 select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
                 try:
-                    select_element = self.driver.find_element(By.ID, select_id)
-                    
-                    # Sempre preencher usando JavaScript para garantir
-                    self.driver.execute_script("arguments[0].value = arguments[1];", select_element, conceito)
-                    self.driver.execute_script(
-                        "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
-                        select_element,
+                    # Re-localizar o select para evitar stale element
+                    select_element = WebDriverWait(self.driver, 3).until(
+                        EC.presence_of_element_located((By.ID, select_id))
                     )
-                    print(f"          ✅ Conceito '{conceito}' aplicado com sucesso!")
-                    preenchidos += 1
-                    time.sleep(0.3)
+                    valor_atual = select_element.get_attribute("value") or ""
+                    
+                    if valor_atual != conceito:
+                        self.driver.execute_script("arguments[0].value = arguments[1];", select_element, conceito)
+                        self.driver.execute_script(
+                            "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+                            select_element,
+                        )
+                        print(f"          ✅ Conceito '{conceito}' aplicado!")
+                        preenchidos += 1
+                        time.sleep(0.2)
+                    else:
+                        print(f"          ℹ️ Conceito '{conceito}' já estava aplicado")
+                        preenchidos += 1
                         
                 except Exception as select_error:
-                    print(f"       ❌ Erro ao aplicar conceito: {select_error}")
+                    print(f"          ❌ Erro ao aplicar conceito: {select_error}")
 
-            print(f"     ✅ {preenchidos} habilidades preenchidas")
+            print(f"     ✅ Total: {preenchidos} habilidades preenchidas")
 
         except Exception as e:
             print(f"     ❌ Erro ao preencher conceitos de habilidades: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
         return preenchidos > 0
 
-    def _fechar_popup_aviso(self):
-        """
-        Fecha pop-up de aviso se aparecer (ex: "Por favor, selecione uma média de referência")
-        """
-        try:
-            # Procurar por mensagens de aviso/info
-            popup_selectors = [
-                "//div[contains(@class, 'ui-messages-info')]//a[contains(@class, 'ui-messages-close')]",
-                "//div[contains(@class, 'ui-messages')]//a[contains(@class, 'ui-messages-close')]",
-                "//a[@class='ui-messages-close']",
-                "//span[@class='ui-icon ui-icon-close']/.."
-            ]
-            
-            for selector in popup_selectors:
-                try:
-                    close_button = self.driver.find_element(By.XPATH, selector)
-                    if close_button.is_displayed():
-                        print("   ⚠️ Pop-up de aviso detectado, fechando...")
-                        close_button.click()
-                        time.sleep(0.5)
-                        print("   ✅ Pop-up fechado")
-                        return True
-                except:
-                    continue
-            
-            # Nenhum pop-up encontrado (normal)
-            return False
-            
-        except Exception as e:
-            # Não é crítico se não conseguir fechar
-            return False
-    
-    def _limpar_texto_habilidade(self, texto):
-        """
-        Limpa o texto da habilidade removendo:
-        - Asterisco (*) no início (indica habilidade já usada)
-        - Espaços extras
-        - Caracteres especiais desnecessários
-        """
-        import re
-        
-        if not texto:
-            return ""
-        
-        # Remover asterisco no início
-        texto = texto.lstrip('*').strip()
-        
-        # Remover espaços extras
-        texto = re.sub(r'\s+', ' ', texto).strip()
-        
-        return texto
-    
     def _texto_corresponde(self, texto_alvo, texto_fonte):
         """
         Compara duas strings ignorando acentos, espaços extras e caixa
-        Usa múltiplas estratégias para garantir correspondência
         """
-        import re  # Importar no início da função
-        
         def normalizar(valor):
             if not valor:
                 return ""
-            # Limpar asterisco e espaços extras PRIMEIRO
-            valor = valor.lstrip('*').strip()
-            # Normalizar acentos
             valor = unicodedata.normalize("NFD", valor)
             valor = "".join(c for c in valor if unicodedata.category(c) != "Mn")
-            # Remover espaços extras
             return re.sub(r"\s+", " ", valor).strip().lower()
 
-        texto_alvo_norm = normalizar(texto_alvo)
-        texto_fonte_norm = normalizar(texto_fonte)
+        return normalizar(texto_alvo) == normalizar(texto_fonte)
+
+    def _fechar_modal_senha_chrome(self):
+        """
+        Fecha a modal do Chrome que pede para "Mudar sua senha" após o login
         
-        # Estratégia 1: Comparação exata
-        if texto_alvo_norm == texto_fonte_norm:
-            return True
+        Esta modal aparece quando o Chrome detecta que uma senha foi comprometida em
+        um vazamento de dados. A modal é nativa do Chrome (não é HTML da página).
         
-        # Estratégia 2: Verificar se um contém o outro (para habilidades longas)
-        if texto_alvo_norm in texto_fonte_norm or texto_fonte_norm in texto_alvo_norm:
-            return True
+        Tentamos várias abordagens para fechá-la:
+        1. Pressionar ESC (fecha modais nativas do Chrome)
+        2. Pressionar ENTER (confirma botão padrão)
+        3. Buscar e clicar no botão "OK"
         
-        # Estratégia 3: Extrair código da habilidade (H1, H2, etc.) e comparar
-        codigo_alvo = re.search(r'\b(h\d+|c\d+)\b', texto_alvo_norm)
-        codigo_fonte = re.search(r'\b(h\d+|c\d+)\b', texto_fonte_norm)
-        
-        if codigo_alvo and codigo_fonte:
-            if codigo_alvo.group(1) == codigo_fonte.group(1):
-                return True
-        
-        return False
+        Se a modal não aparecer, não faz nada (não é um erro).
+        """
+        try:
+            print("   🔍 Verificando se há modal de senha do Chrome...")
+            time.sleep(2)  # Aguardar modal aparecer
+            
+            # Abordagem 1: Pressionar ESC (fecha modais nativas do Chrome)
+            try:
+                body = self.driver.find_element(By.TAG_NAME, "body")
+                body.send_keys(Keys.ESCAPE)
+                print("   ✅ Modal de senha fechada (ESC)")
+                time.sleep(1)
+                return
+            except:
+                pass
+            
+            # Abordagem 2: Pressionar ENTER (confirma botão padrão "OK")
+            try:
+                body = self.driver.find_element(By.TAG_NAME, "body")
+                body.send_keys(Keys.ENTER)
+                print("   ✅ Modal de senha fechada (ENTER)")
+                time.sleep(1)
+                return
+            except:
+                pass
+            
+            # Abordagem 3: Tentar encontrar botão OK visível (se for HTML)
+            try:
+                ok_button = WebDriverWait(self.driver, 2).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'OK') or contains(text(), 'Ok') or contains(@aria-label, 'OK')]"))
+                )
+                ok_button.click()
+                print("   ✅ Modal de senha fechada (botão OK)")
+                time.sleep(1)
+                return
+            except:
+                pass
+            
+            # Abordagem 4: Tentar via JavaScript para fechar qualquer overlay
+            try:
+                self.driver.execute_script("""
+                    // Fechar qualquer modal/overlay do Chrome
+                    const overlays = document.querySelectorAll('[role="dialog"], .modal, [aria-modal="true"]');
+                    overlays.forEach(overlay => {
+                        if (overlay && overlay.style) {
+                            overlay.style.display = 'none';
+                        }
+                    });
+                """)
+                print("   ✅ Modal de senha fechada (JavaScript)")
+                time.sleep(1)
+                return
+            except:
+                pass
+            
+            # Se chegou aqui, a modal não apareceu ou já foi fechada
+            print("   ℹ️ Nenhuma modal de senha detectada")
+            
+        except Exception as e:
+            # Não é um erro crítico, apenas log
+            print(f"   ℹ️ Verificação de modal de senha: {e}")
