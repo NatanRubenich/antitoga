@@ -2816,9 +2816,10 @@ class SGNAutomation:
                     
                     if len(cols) < 3:
                         continue
-                        
-                    competencia_texto = cols[1].text.strip()
-                    habilidade_texto = cols[2].text.strip()
+                    
+                    # Usar textContent via JavaScript para garantir que pegamos o texto
+                    competencia_texto = self.driver.execute_script("return arguments[0].textContent;", cols[0]).strip()
+                    habilidade_texto = self.driver.execute_script("return arguments[0].textContent;", cols[1]).strip()
                     
                 except Exception as e:
                     print(f"       ⚠️ Erro ao ler linha {idx}: {e}")
@@ -2829,24 +2830,34 @@ class SGNAutomation:
                 tipo_origem = None
                 
                 # Procurar em qual avaliação esta habilidade está vinculada
+                print(f"       🔍 DEBUG: Procurando '{habilidade_texto}' nas avaliações...")
                 for av, habilidades_av in mapeamentos["habilidades"].items():
-                    if any(self._texto_corresponde(habilidade_texto, h["habilidade"]) for h in habilidades_av):
-                        # Encontrou! Esta habilidade pertence a esta avaliação
-                        conceito_av = notas_aluno.get(av, "")
-                        if conceito_av:
-                            conceito = conceito_av
-                            av_utilizada = av
-                            tipo_origem = "avaliação"
+                    print(f"          - Verificando {av}: {len(habilidades_av)} habilidades")
+                    for h in habilidades_av:
+                        print(f"            • '{h['habilidade']}'")
+                        # Remover asterisco (*) do início da habilidade coletada para comparação
+                        hab_coletada = h["habilidade"].lstrip("*").strip()
+                        hab_modal = habilidade_texto.lstrip("*").strip()
+                        if self._texto_corresponde(hab_modal, hab_coletada):
+                            print(f"            ✓ MATCH!")
+                            # Encontrou! Esta habilidade pertence a esta avaliação
+                            conceito_av = notas_aluno.get(av, "")
+                            if conceito_av:
+                                conceito = conceito_av
+                                av_utilizada = av
+                                tipo_origem = "avaliação"
 
-                        # Verificar se tem recuperação para esta avaliação
-                        recuperacao = mapeamentos["recuperacao_por_avaliacao"].get(av)
-                        if recuperacao:
-                            conceito_rec = notas_aluno.get(recuperacao, "")
-                            if conceito_rec:
-                                conceito = conceito_rec
-                                av_utilizada = recuperacao
-                                tipo_origem = "recuperação"
+                            # Verificar se tem recuperação para esta avaliação
+                            recuperacao = mapeamentos["recuperacao_por_avaliacao"].get(av)
+                            if recuperacao:
+                                conceito_rec = notas_aluno.get(recuperacao, "")
+                                if conceito_rec:
+                                    conceito = conceito_rec
+                                    av_utilizada = recuperacao
+                                    tipo_origem = "recuperação"
 
+                            break
+                    if av_utilizada:
                         break
 
                 # Preparar mensagem detalhada
@@ -2864,30 +2875,28 @@ class SGNAutomation:
                 else:
                     print(f"       📌 Habilidade: {habilidade_curta}")
                     print(f"          ⚠️ Não encontrada em nenhuma avaliação (deixando vazio)")
-                    continue  # Pula, não preenche nada
 
                 # Aplicar o conceito
                 select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
                 try:
-                    # Re-localizar o select para evitar stale element
-                    select_element = WebDriverWait(self.driver, 3).until(
-                        EC.presence_of_element_located((By.ID, select_id))
-                    )
-                    valor_atual = select_element.get_attribute("value") or ""
-                    
-                    if valor_atual != conceito:
-                        self.driver.execute_script("arguments[0].value = arguments[1];", select_element, conceito)
-                        self.driver.execute_script(
-                            "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
-                            select_element,
-                        )
-                        print(f"          ✅ Conceito '{conceito}' aplicado!")
-                        preenchidos += 1
-                        time.sleep(0.2)
-                    else:
-                        print(f"          ℹ️ Conceito '{conceito}' já estava aplicado")
-                        preenchidos += 1
-                        
+                    # Re-localizar a linha inteira para evitar stale element
+                    time.sleep(0.3)  # Pequeno delay para estabilizar o DOM
+                    linhas_refresh = self.driver.find_elements(By.XPATH, tabela_xpath)
+                    if idx < len(linhas_refresh):
+                        linha_refresh = linhas_refresh[idx]
+                        select_element = linha_refresh.find_element(By.XPATH, f".//select[contains(@id, 'notaConceito_input')]")
+                        valor_atual = select_element.get_attribute("value") or ""
+                        if valor_atual != conceito:
+                            self.driver.execute_script("arguments[0].value = arguments[1];", select_element, conceito)
+                            self.driver.execute_script(
+                                "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+                                select_element,
+                            )
+                            print(f"          ✅ Conceito '{conceito}' aplicado!")
+                            preenchidos += 1
+                        else:
+                            print(f"          ℹ️ Conceito '{conceito}' já era '{valor_atual}'")
+                            preenchidos += 1
                 except Exception as select_error:
                     print(f"          ❌ Erro ao aplicar conceito: {select_error}")
 
@@ -2895,7 +2904,6 @@ class SGNAutomation:
 
         except Exception as e:
             print(f"     ❌ Erro ao preencher conceitos de habilidades: {e}")
-            import traceback
             traceback.print_exc()
             return False
 
