@@ -390,10 +390,7 @@ class SGNAutomation:
             # 4. AGORA SIM, navegar para aba Conceitos
             print("\n4. Navegando para aba Conceitos...")
             try:
-                aba_conceitos = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Conceitos')]")
-                aba_conceitos.click()
-                time.sleep(2)
-                print("   ✓ Aba Conceitos acessada")
+                self._open_conceitos_tab()
             except Exception as e:
                 return False, f"Erro ao acessar aba Conceitos: {e}"
 
@@ -570,10 +567,7 @@ class SGNAutomation:
             # 4. Navegar para aba Conceitos
             print("\n4. Navegando para aba Conceitos...")
             try:
-                aba_conceitos = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Conceitos')]")
-                aba_conceitos.click()
-                time.sleep(2)
-                print("   ✓ Aba Conceitos acessada")
+                self._open_conceitos_tab()
             except Exception as e:
                 return False, f"Erro ao acessar aba Conceitos: {e}"
 
@@ -1028,6 +1022,50 @@ class SGNAutomation:
 
         raise Exception("Não foi possível acessar o diário após múltiplas tentativas")
     
+    def _click_safe(self, element, element_description="elemento"):
+        """
+        Clica em um elemento de forma segura, evitando interceptações por overlays.
+        
+        Este método implementa uma estratégia robusta de clique:
+        1. Rola a página com offset para evitar headers fixos no topo
+        2. Aguarda um momento para estabilizar
+        3. Tenta clique normal do Selenium
+        4. Se interceptado, usa JavaScript click como fallback
+        
+        Args:
+            element: WebElement do Selenium para clicar
+            element_description (str): Descrição do elemento para logs
+            
+        Raises:
+            Exception: Se nenhuma estratégia de clique funcionar
+        """
+        try:
+            # Estratégia 1: Scroll com offset para evitar topbar fixo (120px de margem)
+            self.driver.execute_script(
+                "window.scrollTo(0, arguments[0].getBoundingClientRect().top + window.scrollY - 120);",
+                element
+            )
+            time.sleep(0.5)
+            
+            # Estratégia 2: Tentar clique normal
+            try:
+                element.click()
+                print(f"   ✅ {element_description} clicado com sucesso (clique normal)")
+                return
+            except Exception as click_error:
+                # Se interceptado, tentar JavaScript click
+                if "intercepted" in str(click_error).lower():
+                    print(f"   ⚠️ Clique interceptado, tentando JavaScript click...")
+                    self.driver.execute_script("arguments[0].click();", element)
+                    print(f"   ✅ {element_description} clicado com sucesso (JavaScript)")
+                    return
+                else:
+                    raise
+                    
+        except Exception as e:
+            print(f"   ❌ Erro ao clicar em {element_description}: {str(e)}")
+            raise
+    
     def _open_conceitos_tab(self):
         """
         Abre a aba de Conceitos no diário da turma
@@ -1035,7 +1073,7 @@ class SGNAutomation:
         Este método:
         1. Localiza a aba/link de "Conceitos" na página do diário
         2. Aguarda até que o elemento seja clicável
-        3. Clica na aba para abri-la
+        3. Clica na aba para abri-la usando clique seguro (evita interceptações)
         4. Aguarda o carregamento do conteúdo da aba
         
         O XPath usado procura por elementos que contenham o texto "Conceitos"
@@ -1046,122 +1084,52 @@ class SGNAutomation:
         """
         print("6. Abrindo aba de Conceitos...")
         
-        try:
-            # Usar o XPath específico fornecido pelo usuário
-            print("   🔍 Procurando aba de Conceitos com XPath específico...")
-            conceitos_tab = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/ul/li[7]"))
-            )
-            
-            # Scroll até o elemento para garantir que está visível
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", conceitos_tab)
-            time.sleep(0.5)
-            
-            conceitos_tab.click()
-            print("   ✅ Aba de Conceitos clicada com XPath específico")
-            
-            # Aguardar mais tempo para a aba carregar completamente
-            print("   ⏳ Aguardando aba de Conceitos carregar completamente...")
-            time.sleep(5)  # Aumentado para garantir carregamento
-            
-            # Forçar clique duplo para garantir que a aba seja ativada
+        # Lista de seletores para tentar (do mais específico ao mais genérico)
+        selectors = [
+            ("//a[contains(text(), 'Conceitos')]", "Link com texto 'Conceitos'"),
+            ("/html/body/div[3]/div[3]/div[2]/div[2]/div/div/ul/li[7]/a", "XPath específico li[7]/a"),
+            ("//li[7]//a", "7º item da lista (link)"),
+            ("/html/body/div[3]/div[3]/div[2]/div[2]/div/div/ul/li[7]", "XPath específico li[7]"),
+            ("//a[contains(@href, 'conceito')]", "Link com href contendo 'conceito'"),
+        ]
+        
+        for i, (selector, description) in enumerate(selectors, 1):
             try:
-                print("   🔄 Garantindo que a aba está ativa com clique duplo...")
-                conceitos_tab.click()  # Segundo clique
-                time.sleep(2)
-            except:
-                pass
-            
-            # Verifica se a aba foi aberta corretamente
-            current_url = self.driver.current_url
-            print(f"   URL após clicar na aba: {current_url}")
-            
-            # Verificar se estamos realmente na aba de Conceitos
-            self._verificar_aba_conceitos_ativa()
-            
-            # Verificar se a tabela de alunos está presente
-            try:
-                tabela_xpath = "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/div/div[7]/form/div/div/span/span/div[2]/div/div[2]/table/tbody"
-                WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, tabela_xpath))
+                print(f"   🔍 Tentativa {i}: {description}")
+                conceitos_tab = WebDriverWait(self.driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, selector))
                 )
-                print("   ✅ Tabela de alunos encontrada - aba carregada corretamente")
-            except:
-                print("   ⚠️ Tabela de alunos não encontrada - tentando aguardar mais...")
-                time.sleep(5)
+                
+                # Usar clique seguro (evita interceptações)
+                self._click_safe(conceitos_tab, f"Aba Conceitos ({description})")
+                
+                # Aguardar carregamento
+                print("   ⏳ Aguardando aba de Conceitos carregar...")
+                time.sleep(3)
+                
+                # Verificar se a tabela de alunos está presente (sinal de sucesso)
                 try:
+                    tabela_xpath = "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/div/div[7]/form/div/div/span/span/div[2]/div/div[2]/table/tbody"
                     WebDriverWait(self.driver, 10).until(
                         EC.presence_of_element_located((By.XPATH, tabela_xpath))
                     )
-                    print("   ✅ Tabela de alunos encontrada após segunda tentativa")
-                except:
-                    print("   ❌ Tabela de alunos ainda não encontrada")
-                    # Verificar se a aba está realmente ativa
-                    self._verificar_aba_conceitos_ativa()
-                    # Tira screenshot para debug
-                    self.driver.save_screenshot("debug_conceitos_tab_loaded.png")
-                    print("   📸 Screenshot salvo como 'debug_conceitos_tab_loaded.png'")
-            
-            print("✅ Aba de Conceitos aberta com sucesso")
-            
-        except Exception as e:
-            print(f"   ❌ Erro com XPath específico: {str(e)}")
-            print("   🔄 Tentando seletores alternativos...")
-            
-            # Tenta seletores alternativos como fallback
-            alternative_selectors = [
-                "//a[contains(text(), 'Conceitos')]",
-                "//li[contains(text(), 'Conceitos')]",
-                "//a[contains(@href, 'conceito')]",
-                "//li[7]//a",  # 7º item da lista
-                "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/ul/li[7]/a",  # XPath mais específico
-                "//ul//li[7]",  # Qualquer 7º item de lista
-                "//div[contains(@class, 'tab')]//li[7]"  # 7º item em div de tabs
-            ]
-            
-            for i, selector in enumerate(alternative_selectors, 1):
-                try:
-                    print(f"   Tentativa {i}: {selector}")
-                    element = WebDriverWait(self.driver, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, selector))
-                    )
-                    
-                    # Scroll até o elemento
-                    self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
-                    time.sleep(0.5)  # Reduzido de 1 para 0.5 segundos
-                    
-                    element.click()
-                    print(f"   ✅ Aba encontrada com seletor: {selector}")
-                    time.sleep(2)  # Reduzido de 5 para 2 segundos
-                    
-                    # Se chegou até aqui, funcionou
-                    print("✅ Aba de Conceitos aberta com seletor alternativo")
+                    print("   ✅ Tabela de alunos encontrada - aba carregada corretamente")
+                    print("✅ Aba de Conceitos aberta com sucesso")
                     return
-                    
-                except Exception as e2:
-                    print(f"   ❌ Falhou: {str(e2)}")
+                except:
+                    print("   ⚠️ Tabela de alunos não encontrada, tentando próximo seletor...")
                     continue
-            
-            # Se chegou até aqui, nenhum seletor funcionou
-            print("   📸 Tirando screenshot para debug...")
-            self.driver.save_screenshot("debug_conceitos_tab.png")
-            print("   📸 Screenshot salvo como 'debug_conceitos_tab.png'")
-            
-            # Tenta listar todos os elementos li para debug
-            try:
-                print("   🔍 Listando elementos <li> disponíveis para debug...")
-                li_elements = self.driver.find_elements(By.XPATH, "//li")
-                for i, li in enumerate(li_elements[:10], 1):  # Mostra apenas os primeiros 10
-                    try:
-                        text = li.text.strip()[:50]  # Primeiros 50 caracteres
-                        if text:
-                            print(f"     Li {i}: {text}")
-                    except:
-                        print(f"     Li {i}: [sem texto]")
-            except:
-                print("   ❌ Não foi possível listar elementos li")
-            
-            raise Exception("Não foi possível encontrar a aba de Conceitos com nenhum seletor")
+                    
+            except Exception as e:
+                print(f"   ❌ Falhou com {description}: {str(e)[:100]}")
+                continue
+        
+        # Se chegou até aqui, nenhum seletor funcionou
+        print("   📸 Tirando screenshot para debug...")
+        self.driver.save_screenshot("debug_conceitos_tab.png")
+        print("   📸 Screenshot salvo como 'debug_conceitos_tab.png'")
+        
+        raise Exception("Não foi possível encontrar a aba de Conceitos com nenhum seletor")
     
     def close_browser(self):
         """
