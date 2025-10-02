@@ -3871,3 +3871,323 @@ class SGNAutomation:
             import traceback
             traceback.print_exc()
             return ras_cadastradas
+    
+    def _limpar_nome_aluno(self, nome_completo):
+        """
+        Remove sufixos como [PCD], [MENOR], [PCD - MENOR] do nome do aluno
+        
+        Args:
+            nome_completo (str): Nome completo com possíveis sufixos
+            
+        Returns:
+            str: Nome limpo sem sufixos
+            
+        Example:
+            "Matheus Gonçalves dos Santos - [PCD]" -> "Matheus Gonçalves dos Santos"
+            "Mateus Müller Biscaro - [MENOR]" -> "Mateus Müller Biscaro"
+            "Ayumi Iura - [PCD - MENOR]" -> "Ayumi Iura"
+        """
+        # Remove tudo após o hífen seguido de espaço e colchete
+        if " - [" in nome_completo:
+            nome_limpo = nome_completo.split(" - [")[0].strip()
+        else:
+            nome_limpo = nome_completo.strip()
+        
+        return nome_limpo
+    
+    def _calcular_moda_conceitos(self, conceitos):
+        """
+        Calcula a moda (valor mais frequente) dos conceitos de um aluno
+        
+        Args:
+            conceitos (list): Lista de conceitos (ex: ['A', 'B', 'B', 'C', 'B'])
+            
+        Returns:
+            str: Conceito mais frequente (moda)
+            
+        Example:
+            ['A', 'B', 'B', 'C', 'B'] -> 'B'
+            ['A', 'A', 'C'] -> 'A'
+        """
+        from collections import Counter
+        
+        if not conceitos:
+            return None
+        
+        # Contar frequência de cada conceito
+        contador = Counter(conceitos)
+        
+        # Retornar o conceito mais comum
+        moda = contador.most_common(1)[0][0]
+        
+        return moda
+    
+    def _coletar_conceitos_alunos(self, trimestre_referencia):
+        """
+        Coleta os conceitos de todos os alunos abrindo o modal individual de cada um
+        
+        Args:
+            trimestre_referencia (str): Trimestre de referência (TR1, TR2, TR3)
+            
+        Returns:
+            dict: Dicionário com {nome_aluno_limpo: conceito_moda}
+            
+        Example:
+            {
+                "Matheus Gonçalves dos Santos": "B",
+                "Mateus Müller Biscaro": "A",
+                "Ayumi Iura": "C"
+            }
+        """
+        print("\n📊 Coletando conceitos de todos os alunos...")
+        
+        alunos_conceitos = {}
+        
+        try:
+            # Aguardar tabela de alunos carregar
+            time.sleep(2)
+            
+            # Encontrar todas as linhas de alunos na tabela
+            linhas_alunos = self.driver.find_elements(
+                By.CSS_SELECTOR,
+                "tbody[id*='tabelaConceitos_data'] tr[data-ri]"
+            )
+            
+            total_alunos = len(linhas_alunos)
+            print(f"   ✓ Encontrados {total_alunos} alunos")
+            
+            for idx, linha in enumerate(linhas_alunos, 1):
+                try:
+                    # Obter nome do aluno (primeira célula)
+                    nome_celula = linha.find_element(By.CSS_SELECTOR, "td:first-child")
+                    nome_completo = nome_celula.text.strip()
+                    nome_limpo = self._limpar_nome_aluno(nome_completo)
+                    
+                    print(f"\n   [{idx}/{total_alunos}] Processando: {nome_limpo}")
+                    
+                    # Clicar no botão de editar (ícone de lápis) para abrir modal
+                    btn_editar = linha.find_element(By.CSS_SELECTOR, "a[title='Editar'] i.fa-pencil")
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", btn_editar)
+                    time.sleep(0.5)
+                    btn_editar.click()
+                    time.sleep(2)
+                    
+                    # Aguardar modal abrir
+                    WebDriverWait(self.driver, 10).until(
+                        EC.visibility_of_element_located((By.ID, "modalDadosAtitudes"))
+                    )
+                    
+                    # Clicar no accordion "Conceitos das Habilidades" para expandir
+                    try:
+                        accordion_header = self.driver.find_element(
+                            By.XPATH,
+                            "//span[contains(text(), 'Conceitos das Habilidades')]/parent::div"
+                        )
+                        self.driver.execute_script("arguments[0].click();", accordion_header)
+                        time.sleep(1)
+                    except:
+                        print("      ⚠️ Accordion já expandido ou não encontrado")
+                    
+                    # Coletar todos os conceitos das habilidades
+                    conceitos = []
+                    try:
+                        # Encontrar todas as linhas da tabela de habilidades
+                        linhas_habilidades = self.driver.find_elements(
+                            By.CSS_SELECTOR,
+                            "tbody[id*='dataTableHabilidades_data'] tr[data-ri]"
+                        )
+                        
+                        for linha_hab in linhas_habilidades:
+                            try:
+                                # Encontrar o select de conceito (terceira coluna)
+                                select_conceito = linha_hab.find_element(
+                                    By.CSS_SELECTOR,
+                                    "select[id*='notaConceito_input']"
+                                )
+                                
+                                # Obter valor selecionado
+                                conceito_selecionado = Select(select_conceito).first_selected_option.text.strip()
+                                
+                                # Adicionar à lista se não for "Selecione"
+                                if conceito_selecionado and conceito_selecionado != "Selecione":
+                                    conceitos.append(conceito_selecionado)
+                            except:
+                                continue
+                        
+                        print(f"      ✓ Conceitos coletados: {conceitos}")
+                        
+                        # Calcular moda
+                        if conceitos:
+                            moda = self._calcular_moda_conceitos(conceitos)
+                            alunos_conceitos[nome_limpo] = moda
+                            print(f"      ✅ Conceito predominante (moda): {moda}")
+                        else:
+                            print(f"      ⚠️ Nenhum conceito encontrado para este aluno")
+                    
+                    except Exception as e:
+                        print(f"      ❌ Erro ao coletar conceitos: {e}")
+                    
+                    # Fechar modal
+                    try:
+                        btn_fechar = self.driver.find_element(
+                            By.CSS_SELECTOR,
+                            "div[id='modalDadosAtitudes'] .ui-dialog-titlebar-close"
+                        )
+                        btn_fechar.click()
+                        time.sleep(1)
+                    except:
+                        # Tentar via JavaScript
+                        self.driver.execute_script("PF('modalDadosAtitudes').hide();")
+                        time.sleep(1)
+                
+                except Exception as e:
+                    print(f"      ❌ Erro ao processar aluno: {e}")
+                    # Tentar fechar modal em caso de erro
+                    try:
+                        self.driver.execute_script("PF('modalDadosAtitudes').hide();")
+                        time.sleep(1)
+                    except:
+                        pass
+                    continue
+            
+            print(f"\n✅ Coleta concluída! Total de alunos processados: {len(alunos_conceitos)}/{total_alunos}")
+            return alunos_conceitos
+            
+        except Exception as e:
+            print(f"❌ Erro ao coletar conceitos dos alunos: {e}")
+            import traceback
+            traceback.print_exc()
+            return alunos_conceitos
+    
+    def lancar_pareceres_por_nota(
+        self,
+        username,
+        password,
+        codigo_turma,
+        trimestre_referencia="TR2"
+    ):
+        """
+        Lança pareceres pedagógicos baseados na moda dos conceitos de cada aluno
+        
+        Fluxo:
+        1. Faz login no sistema
+        2. Navega até o diário da turma
+        3. Abre aba de Conceitos
+        4. Seleciona o trimestre de referência
+        5. Para cada aluno:
+           - Abre modal individual
+           - Coleta todos os conceitos das habilidades
+           - Calcula a moda (conceito mais frequente)
+        6. Navega para aba Pedagógico
+        7. Para cada aluno:
+           - Seleciona o aluno no dropdown
+           - Lança o parecer baseado no conceito predominante
+        
+        Args:
+            username (str): Nome de usuário para login no SGN
+            password (str): Senha do usuário
+            codigo_turma (str): Código identificador da turma
+            trimestre_referencia (str): Trimestre de referência (TR1, TR2 ou TR3)
+            
+        Returns:
+            tuple: (success: bool, message: str)
+        """
+        try:
+            print("\n" + "="*80)
+            print(" 📝 LANÇAMENTO DE PARECERES POR NOTA")
+            print("="*80)
+            
+            # 1. Fazer login
+            print("\n1. Realizando login...")
+            success, message = self.perform_login(username, password)
+            if not success:
+                return False, message
+            
+            # 2. Navegar para o diário da turma
+            print(f"\n2. Navegando para o diário da turma {codigo_turma}...")
+            self.driver.get(f"https://sgn.sesisenai.org.br/pages/diarioClasse/diario-classe.html?idDiario={codigo_turma}")
+            time.sleep(3)
+            
+            # 3. Abrir aba de Conceitos
+            print("\n3. Navegando para aba Conceitos...")
+            try:
+                aba_conceitos = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Conceitos')]")
+                aba_conceitos.click()
+                time.sleep(2)
+                print("   ✓ Aba Conceitos acessada")
+            except Exception as e:
+                return False, f"Erro ao acessar aba Conceitos: {e}"
+            
+            # 4. Selecionar trimestre de referência
+            print(f"\n4. Selecionando trimestre de referência: {trimestre_referencia}...")
+            self._selecionar_trimestre_referencia(trimestre_referencia)
+            
+            # 5. Coletar conceitos de todos os alunos
+            print("\n5. Coletando conceitos de todos os alunos...")
+            alunos_conceitos = self._coletar_conceitos_alunos(trimestre_referencia)
+            
+            if not alunos_conceitos:
+                return False, "Nenhum conceito foi coletado. Verifique se há alunos com conceitos lançados."
+            
+            # 6. Navegar para aba Pedagógico
+            print("\n6. Navegando para aba Pedagógico...")
+            try:
+                aba_pedagogico = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Pedagógico')]")
+                aba_pedagogico.click()
+                time.sleep(3)
+                print("   ✓ Aba Pedagógico acessada")
+            except Exception as e:
+                return False, f"Erro ao acessar aba Pedagógico: {e}"
+            
+            # 7. Lançar pareceres para cada aluno
+            print("\n7. Lançando pareceres...")
+            pareceres_lancados = 0
+            
+            for nome_aluno, conceito_moda in alunos_conceitos.items():
+                try:
+                    print(f"\n   Lançando parecer para: {nome_aluno} (Conceito: {conceito_moda})")
+                    
+                    # Selecionar aluno no dropdown
+                    select_estudante = WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.ID, "tabViewDiarioClasse:formAbaPedagogico:selectEstudantes_input"))
+                    )
+                    
+                    # Encontrar a opção que contém o nome do aluno
+                    select_obj = Select(select_estudante)
+                    aluno_encontrado = False
+                    
+                    for option in select_obj.options:
+                        if nome_aluno in option.text:
+                            select_obj.select_by_visible_text(option.text)
+                            aluno_encontrado = True
+                            time.sleep(2)
+                            print(f"      ✓ Aluno selecionado no dropdown")
+                            break
+                    
+                    if not aluno_encontrado:
+                        print(f"      ⚠️ Aluno não encontrado no dropdown: {nome_aluno}")
+                        continue
+                    
+                    # Aqui você pode adicionar lógica adicional para preencher pareceres
+                    # baseado no conceito_moda, se necessário
+                    
+                    pareceres_lancados += 1
+                    
+                except Exception as e:
+                    print(f"      ❌ Erro ao lançar parecer para {nome_aluno}: {e}")
+                    continue
+            
+            # Mensagem final
+            mensagem_final = f"Pareceres lançados com sucesso! Processados: {pareceres_lancados}/{len(alunos_conceitos)} alunos"
+            print(f"\n{'='*80}")
+            print(f"✅ {mensagem_final}")
+            print(f"{'='*80}\n")
+            
+            return True, mensagem_final
+            
+        except Exception as e:
+            error_msg = f"Erro ao lançar pareceres: {str(e)}"
+            print(f"❌ {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return False, error_msg

@@ -132,6 +132,44 @@ class LoginRequestRA(BaseModel):
     descricao_ra: str = Field(..., min_length=10, max_length=5000, description="Descrição da RA", example="Reforço em programação orientada a objetos")
     nome_arquivo_ra: str = Field(..., min_length=1, max_length=80, description="Nome do arquivo PDF", example="RA_Turma_369528_TR2.pdf")
 
+class ParecerRequest(BaseModel):
+    """
+    Modelo para requisição de lançamento de pareceres baseados em notas
+    
+    Attributes:
+        username (str): Nome de usuário para login no SGN
+        password (str): Senha do usuário
+        codigo_turma (str): Código identificador da turma
+        trimestre_referencia (TrimestreReferencia): Trimestre de referência
+    """
+    username: str = Field(
+        ..., 
+        min_length=3, 
+        max_length=100,
+        description="Nome de usuário do SGN (3-100 caracteres)",
+        example="natan.rubenich"
+    )
+    password: str = Field(
+        ..., 
+        min_length=3,
+        max_length=100,
+        description="Senha do usuário (3-100 caracteres)",
+        example="sua_senha_secreta"
+    )
+    codigo_turma: str = Field(
+        ..., 
+        min_length=1,
+        max_length=20,
+        pattern=r'^\d+$',
+        description="Código numérico da turma (apenas dígitos)",
+        example="369528"
+    )
+    trimestre_referencia: TrimestreReferencia = Field(
+        default=TrimestreReferencia.TR2,
+        description="Trimestre de referência utilizado para lançamento dos pareceres",
+        example="TR2"
+    )
+
 class AutomationResponse(BaseModel):
     """
     Modelo para resposta da automação

@@ -5,7 +5,7 @@ Este módulo fornece o endpoint principal para lançamento de conceitos trimestr
 de forma automatizada no sistema SGN.
 """
 from fastapi import FastAPI, Body, File, UploadFile, Form
-from .models import LoginRequest, LoginRequestRA, AutomationResponse, AtitudeObservada, ConceitoHabilidade, TrimestreReferencia
+from .models import LoginRequest, LoginRequestRA, ParecerRequest, AutomationResponse, AtitudeObservada, ConceitoHabilidade, TrimestreReferencia
 from .selenium_config import SeleniumManager
 from .sgn_automation import SGNAutomation
 import tempfile
@@ -397,6 +397,73 @@ def create_app():
                 message=error_msg
             )
     
+    @app.post("/lancar-pareceres-por-nota", response_model=AutomationResponse)
+    async def lancar_pareceres_por_nota(request: ParecerRequest = Body(...)):
+        """
+        🆕 NOVO: Lança pareceres pedagógicos baseados na moda dos conceitos
+        
+        Este endpoint coleta os conceitos de cada aluno e calcula a moda (nota mais frequente)
+        para gerar pareceres por trimestre.
+        
+        Fluxo:
+        1. Faz login no sistema SGN
+        2. Navega para o diário da turma
+        3. Abre aba de Conceitos
+        4. Seleciona o trimestre de referência
+        5. Para cada aluno:
+           - Abre modal individual
+           - Coleta todos os conceitos das habilidades
+           - Calcula a moda (conceito mais frequente)
+           - Limpa o nome do aluno (remove sufixos como [PCD], [MENOR])
+        6. Navega para aba Pedagógico
+        7. Para cada aluno:
+           - Seleciona o aluno no dropdown
+           - Lança o parecer baseado no conceito predominante
+        
+        Args:
+            request (ParecerRequest): Dados de login, código da turma e trimestre
+            
+        Returns:
+            AutomationResponse: Resultado da automação com estatísticas
+        """
+        try:
+            request_dict = request.dict()
+            if 'password' in request_dict:
+                request_dict['password'] = '***'
+            
+            print("\n" + "="*80)
+            print(" 📝 NOVA REQUISIÇÃO - LANÇAMENTO DE PARECERES POR NOTA")
+            print("-"*80)
+            print(f"Dados da requisição: {request_dict}")
+            
+            print(f"🔧 Parâmetros recebidos:")
+            print(f"   - Usuário: {request.username}")
+            print(f"   - Código da turma: {request.codigo_turma}")
+            print(f"   - Trimestre referência: {request.trimestre_referencia}")
+            print("-"*80 + "\n")
+
+            # Executar lançamento de pareceres
+            success, message = sgn_automation.lancar_pareceres_por_nota(
+                username=request.username,
+                password=request.password,
+                codigo_turma=request.codigo_turma,
+                trimestre_referencia=request.trimestre_referencia
+            )
+            
+            return AutomationResponse(
+                success=success,
+                message=message
+            )
+            
+        except Exception as e:
+            error_msg = f"Erro na API: {str(e)}"
+            print(f"❌ {error_msg}")
+            
+            return AutomationResponse(
+                success=False,
+                message=error_msg
+            )
+    
     @app.get("/")
     async def root():
         """
@@ -420,11 +487,12 @@ def create_app():
         """
         return {
             "message": "SGN Automação de Notas API",
-            "version": "3.0.0",
+            "version": "4.0.0",
             "endpoints": {
                 "lancar_conceito_trimestre": "POST /lancar-conceito-trimestre - 📝 SIMPLES: Aplica o MESMO conceito para TODAS as habilidades",
                 "lancar_conceito_inteligente": "POST /lancar-conceito-inteligente - 🧠 INTELIGENTE: Aplica conceitos baseados nas avaliações de cada habilidade",
                 "lancar_conceito_inteligente_RA": "POST /lancar-conceito-inteligente-RA - 🎓 INTELIGENTE COM RA: Igual ao inteligente mas mantém C e cadastra RA",
+                "lancar_pareceres_por_nota": "POST /lancar-pareceres-por-nota - 📊 PARECERES: Coleta conceitos e lança pareceres baseados na moda",
                 "health": "GET /health - Health check da API",
                 "docs": "GET /docs - Documentação Swagger",
                 "redoc": "GET /redoc - Documentação ReDoc"
@@ -432,7 +500,8 @@ def create_app():
             "modos": {
                 "simples": "Aplica o mesmo conceito (ex: B) para todas as habilidades de todos os alunos",
                 "inteligente": "Lê as avaliações cadastradas e aplica o conceito específico de cada avaliação para sua habilidade correspondente",
-                "inteligente_com_ra": "Igual ao inteligente, mas mantém conceito C (não troca por NE) e cadastra Recomposição de Aprendizagem para cada habilidade C"
+                "inteligente_com_ra": "Igual ao inteligente, mas mantém conceito C (não troca por NE) e cadastra Recomposição de Aprendizagem para cada habilidade C",
+                "pareceres_por_nota": "Coleta conceitos de cada aluno, calcula a moda (nota mais frequente) e lança pareceres pedagógicos"
             }
         }
     
