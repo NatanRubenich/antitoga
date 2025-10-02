@@ -7,6 +7,7 @@ e documentação da API de lançamento de conceitos.
 from pydantic import BaseModel, Field
 from typing import Optional
 from enum import Enum
+from fastapi import UploadFile
 
 class AtitudeObservada(str, Enum):
     """Opções disponíveis para observações de atitudes"""
@@ -103,6 +104,33 @@ class LoginRequest(BaseModel):
                 }
             ]
         }
+
+class LoginRequestRA(BaseModel):
+    """
+    Modelo para requisição de lançamento de conceitos COM Recomposição de Aprendizagem (RA)
+    
+    Attributes:
+        username (str): Nome de usuário para login no SGN
+        password (str): Senha do usuário
+        codigo_turma (str): Código identificador da turma
+        atitude_observada (AtitudeObservada): Opção para observações de atitudes (padrão: "Raramente")
+        conceito_habilidade (ConceitoHabilidade): Opção para conceitos de habilidades (padrão: "B")
+        trimestre_referencia (TrimestreReferencia): Trimestre em que os conceitos serão lançados
+        inicio_ra (str): Data de início da RA (formato: DD/MM/YYYY)
+        termino_ra (str): Data de término da RA (formato: DD/MM/YYYY)
+        descricao_ra (str): Descrição da RA (O quê/Por quê/Como)
+        nome_arquivo_ra (str): Nome do arquivo PDF da RA
+    """
+    username: str = Field(..., min_length=3, max_length=100, description="Nome de usuário do SGN")
+    password: str = Field(..., min_length=3, max_length=100, description="Senha do usuário")
+    codigo_turma: str = Field(..., min_length=1, max_length=20, pattern=r'^\d+$', description="Código da turma")
+    atitude_observada: AtitudeObservada = Field(default=AtitudeObservada.RARAMENTE, description="Opção para atitudes")
+    conceito_habilidade: ConceitoHabilidade = Field(default=ConceitoHabilidade.B, description="Conceito padrão (fallback)")
+    trimestre_referencia: TrimestreReferencia = Field(default=TrimestreReferencia.TR2, description="Trimestre de referência")
+    inicio_ra: str = Field(..., pattern=r'^\d{2}/\d{2}/\d{4}$', description="Data início RA (DD/MM/YYYY)", example="01/10/2025")
+    termino_ra: str = Field(..., pattern=r'^\d{2}/\d{2}/\d{4}$', description="Data término RA (DD/MM/YYYY)", example="31/10/2025")
+    descricao_ra: str = Field(..., min_length=10, max_length=5000, description="Descrição da RA", example="Reforço em programação orientada a objetos")
+    nome_arquivo_ra: str = Field(..., min_length=1, max_length=80, description="Nome do arquivo PDF", example="RA_Turma_369528_TR2.pdf")
 
 class AutomationResponse(BaseModel):
     """

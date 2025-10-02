@@ -4,10 +4,12 @@ API de Automação de Lançamento de Notas - SGN
 Este módulo fornece o endpoint principal para lançamento de conceitos trimestrais
 de forma automatizada no sistema SGN.
 """
-from fastapi import FastAPI, Body
-from .models import LoginRequest, AutomationResponse
+from fastapi import FastAPI, Body, File, UploadFile, Form
+from .models import LoginRequest, LoginRequestRA, AutomationResponse, AtitudeObservada, ConceitoHabilidade, TrimestreReferencia
 from .selenium_config import SeleniumManager
 from .sgn_automation import SGNAutomation
+import tempfile
+import os
 
 # Instâncias globais compartilhadas
 selenium_manager = SeleniumManager()
@@ -262,6 +264,139 @@ def create_app():
             )
     
     
+    @app.post("/lancar-conceito-inteligente-RA", response_model=AutomationResponse)
+    async def lancar_conceito_inteligente_ra(
+        username: str = Form(..., description="Nome de usuário do SGN"),
+        password: str = Form(..., description="Senha do usuário"),
+        codigo_turma: str = Form(..., description="Código da turma"),
+        inicio_ra: str = Form(..., description="Data início RA (DD/MM/YYYY)", example="01/10/2025"),
+        termino_ra: str = Form(..., description="Data término RA (DD/MM/YYYY)", example="31/10/2025"),
+        descricao_ra: str = Form(..., description="Descrição da RA"),
+        nome_arquivo_ra: str = Form(..., description="Nome do arquivo PDF"),
+        arquivo_ra: UploadFile = File(..., description="Arquivo PDF da RA"),
+        atitude_observada: str = Form(default="Raramente", description="Atitude observada"),
+        conceito_habilidade: str = Form(default="B", description="Conceito padrão (fallback)"),
+        trimestre_referencia: str = Form(default="TR2", description="Trimestre de referência"),
+    ):
+        """
+        🆕 NOVO: Lança conceitos INTELIGENTES com cadastro de Recomposição de Aprendizagem (RA)
+        
+        Este endpoint realiza o fluxo INTELIGENTE com RA:
+        1. Faz login no sistema SGN
+        2. Navega para aba "Aulas/Avaliações" e coleta todas as avaliações cadastradas
+        3. Coleta recuperações paralelas e mapeia para suas avaliações de origem
+        4. Abre cada modal de avaliação e extrai as habilidades vinculadas
+        5. Para cada aluno:
+           - Lê as notas da tabela principal (AV1=B, RP1=A, etc.)
+           - Abre modal de conceitos
+           - Aplica atitudes com o padrão escolhido
+           - Para cada habilidade, aplica o conceito da avaliação correspondente
+           - **DIFERENÇA**: Se conceito = C, MANTÉM o C (não troca por NE)
+           - Se existe recuperação (RP), usa RP em vez de AV
+           - **NOVO**: Se aluno tem algum C, cadastra RA para CADA habilidade com C
+        
+        Diferenças do /lancar-conceito-inteligente:
+        - Endpoint anterior: Conceito C vira NE automaticamente
+        - Este endpoint: Conceito C é mantido e RA é cadastrada
+        
+        Fluxo de cadastro de RA:
+        1. Detecta habilidades com conceito C
+        2. Para cada habilidade C:
+           - Clica em "Adicionar" na seção de RA
+           - Seleciona a habilidade
+           - Preenche data início e término
+           - Preenche descrição
+           - Clica na aba "Anexo"
+           - Faz upload do PDF
+           - Salva o anexo
+           - Salva a RA
+        
+        Args:
+            username: Nome de usuário do SGN
+            password: Senha do usuário
+            codigo_turma: Código da turma
+            inicio_ra: Data de início da RA (DD/MM/YYYY)
+            termino_ra: Data de término da RA (DD/MM/YYYY)
+            descricao_ra: Descrição da RA (O quê/Por quê/Como)
+            nome_arquivo_ra: Nome do arquivo PDF
+            arquivo_ra: Arquivo PDF da RA (upload)
+            atitude_observada: Atitude padrão (default: "Raramente")
+            conceito_habilidade: Conceito padrão fallback (default: "B")
+            trimestre_referencia: Trimestre (default: "TR2")
+            
+        Returns:
+            AutomationResponse: Resultado da automação com estatísticas
+        """
+        try:
+            print("\n" + "="*80)
+            print(" 🆕 NOVA REQUISIÇÃO - MODO INTELIGENTE COM RA")
+            print("-"*80)
+            print(f"🔧 Parâmetros recebidos:")
+            print(f"   - Usuário: {username}")
+            print(f"   - Código da turma: {codigo_turma}")
+            print(f"   - Atitude observada: {atitude_observada}")
+            print(f"   - Conceito habilidade (fallback): {conceito_habilidade}")
+            print(f"   - Trimestre referência: {trimestre_referencia}")
+            print(f"   - Início RA: {inicio_ra}")
+            print(f"   - Término RA: {termino_ra}")
+            print(f"   - Nome arquivo RA: {nome_arquivo_ra}")
+            print(f"   - Arquivo RA: {arquivo_ra.filename} ({arquivo_ra.content_type})")
+            print(f"   - Modo: INTELIGENTE COM RA (C mantido + cadastro de RA)")
+            print("-"*80 + "\n")
+            
+            # Salvar arquivo temporariamente
+            temp_dir = tempfile.gettempdir()
+            temp_file_path = os.path.join(temp_dir, arquivo_ra.filename)
+            
+            with open(temp_file_path, "wb") as buffer:
+                content = await arquivo_ra.read()
+                buffer.write(content)
+            
+            print(f"📁 Arquivo salvo temporariamente em: {temp_file_path}")
+            
+            # Executar lançamento INTELIGENTE com RA
+            success, message = sgn_automation.lancar_conceito_inteligente_com_ra(
+                username=username,
+                password=password,
+                codigo_turma=codigo_turma,
+                atitude_observada=atitude_observada,
+                conceito_habilidade=conceito_habilidade,
+                trimestre_referencia=trimestre_referencia,
+                inicio_ra=inicio_ra,
+                termino_ra=termino_ra,
+                descricao_ra=descricao_ra,
+                nome_arquivo_ra=nome_arquivo_ra,
+                caminho_arquivo_ra=temp_file_path
+            )
+            
+            # Limpar arquivo temporário
+            try:
+                os.remove(temp_file_path)
+                print(f"🗑️ Arquivo temporário removido: {temp_file_path}")
+            except Exception as e:
+                print(f"⚠️ Não foi possível remover arquivo temporário: {e}")
+            
+            return AutomationResponse(
+                success=success,
+                message=message
+            )
+            
+        except Exception as e:
+            error_msg = f"Erro na API: {str(e)}"
+            print(f"❌ {error_msg}")
+            
+            # Tentar limpar arquivo temporário em caso de erro
+            try:
+                if 'temp_file_path' in locals():
+                    os.remove(temp_file_path)
+            except:
+                pass
+            
+            return AutomationResponse(
+                success=False,
+                message=error_msg
+            )
+    
     @app.get("/")
     async def root():
         """
@@ -285,17 +420,19 @@ def create_app():
         """
         return {
             "message": "SGN Automação de Notas API",
-            "version": "2.0.0",
+            "version": "3.0.0",
             "endpoints": {
                 "lancar_conceito_trimestre": "POST /lancar-conceito-trimestre - 📝 SIMPLES: Aplica o MESMO conceito para TODAS as habilidades",
                 "lancar_conceito_inteligente": "POST /lancar-conceito-inteligente - 🧠 INTELIGENTE: Aplica conceitos baseados nas avaliações de cada habilidade",
+                "lancar_conceito_inteligente_RA": "POST /lancar-conceito-inteligente-RA - 🎓 INTELIGENTE COM RA: Igual ao inteligente mas mantém C e cadastra RA",
                 "health": "GET /health - Health check da API",
                 "docs": "GET /docs - Documentação Swagger",
                 "redoc": "GET /redoc - Documentação ReDoc"
             },
             "modos": {
                 "simples": "Aplica o mesmo conceito (ex: B) para todas as habilidades de todos os alunos",
-                "inteligente": "Lê as avaliações cadastradas e aplica o conceito específico de cada avaliação para sua habilidade correspondente"
+                "inteligente": "Lê as avaliações cadastradas e aplica o conceito específico de cada avaliação para sua habilidade correspondente",
+                "inteligente_com_ra": "Igual ao inteligente, mas mantém conceito C (não troca por NE) e cadastra Recomposição de Aprendizagem para cada habilidade C"
             }
         }
     

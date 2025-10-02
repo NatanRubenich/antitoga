@@ -431,6 +431,192 @@ class SGNAutomation:
             print(f"❌ {error_msg}")
             return False, error_msg
     
+    def lancar_conceito_inteligente_com_ra(
+        self,
+        username,
+        password,
+        codigo_turma,
+        inicio_ra,
+        termino_ra,
+        descricao_ra,
+        nome_arquivo_ra,
+        caminho_arquivo_ra,
+        atitude_observada=None,
+        conceito_habilidade=None,
+        trimestre_referencia="TR2",
+    ):
+        """
+        🆕 NOVO: Executa o fluxo completo com lançamento INTELIGENTE de conceitos COM CADASTRO DE RA
+        
+        Diferenças do método lancar_conceito_inteligente():
+        - Mantém conceito C (não troca por NE)
+        - Cadastra Recomposição de Aprendizagem para cada habilidade com conceito C
+        
+        Args:
+            username (str): Nome de usuário para login no SGN
+            password (str): Senha do usuário
+            codigo_turma (str): Código identificador da turma
+            inicio_ra (str): Data de início da RA (DD/MM/YYYY)
+            termino_ra (str): Data de término da RA (DD/MM/YYYY)
+            descricao_ra (str): Descrição da RA
+            nome_arquivo_ra (str): Nome do arquivo PDF
+            caminho_arquivo_ra (str): Caminho completo do arquivo PDF
+            atitude_observada (str, optional): Opção para observações de atitudes. Padrão: "Raramente"
+            conceito_habilidade (str, optional): Conceito padrão (fallback). Padrão: "B"
+            trimestre_referencia (str): Trimestre de referência (TR1, TR2 ou TR3)
+                
+        Returns:
+            tuple: (success: bool, message: str)
+        """
+        try:
+            from .models import AtitudeObservada, ConceitoHabilidade
+            
+            if not isinstance(username, str) or not isinstance(password, str) or not isinstance(codigo_turma, str):
+                raise TypeError("Parâmetros username, password e codigo_turma devem ser strings")
+            
+            if atitude_observada is None:
+                atitude_observada = "Raramente"
+            if conceito_habilidade is None:
+                conceito_habilidade = "B"
+            if trimestre_referencia is None:
+                trimestre_referencia = "TR2"
+
+            if hasattr(trimestre_referencia, "value"):
+                trimestre_referencia = trimestre_referencia.value
+
+            trimestre_referencia = str(trimestre_referencia).strip().upper()
+            valid_trimestres = {"TR1", "TR2", "TR3"}
+            if trimestre_referencia not in valid_trimestres:
+                raise ValueError(
+                    f"Trimestre de referência inválido. Valores aceitos: {', '.join(sorted(valid_trimestres))}"
+                )
+            
+            # Mapear parâmetros para enums
+            def normalize_str(s):
+                import unicodedata
+                return ''.join(c for c in unicodedata.normalize('NFD', str(s).lower()) 
+                            if unicodedata.category(c) != 'Mn')
+            
+            if isinstance(atitude_observada, str):
+                input_normalized = normalize_str(atitude_observada)
+                for a in AtitudeObservada:
+                    if normalize_str(a.value) == input_normalized:
+                        atitude_mapeada = a
+                        break
+                else:
+                    for a in AtitudeObservada:
+                        if input_normalized in normalize_str(a.value) or normalize_str(a.value) in input_normalized:
+                            atitude_mapeada = a
+                            break
+                    else:
+                        raise ValueError(
+                            f"Atitude observada inválida. Valores aceitos: {', '.join(e.value for e in AtitudeObservada)}"
+                        )
+            else:
+                atitude_mapeada = atitude_observada
+            
+            if isinstance(conceito_habilidade, str):
+                conceito_upper = conceito_habilidade.strip().upper()
+                conceito_mapeado = next(
+                    (c for c in ConceitoHabilidade 
+                     if c.value.upper() == conceito_upper),
+                    None
+                )
+                if conceito_mapeado is None:
+                    for c in ConceitoHabilidade:
+                        if c.value.upper() == conceito_upper or \
+                           (len(conceito_upper) == 1 and c.value.upper() == conceito_upper):
+                            conceito_mapeado = c
+                            break
+                    else:
+                        raise ValueError(
+                            f"Conceito de habilidade inválido. Valores aceitos: {', '.join(e.value for e in ConceitoHabilidade if e != ConceitoHabilidade.SELECIONE)}"
+                        )
+            else:
+                conceito_mapeado = conceito_habilidade
+            
+            print(f"🔧 Parâmetros recebidos (MODO INTELIGENTE COM RA):")
+            print(f"   - Usuário: {username}")
+            print(f"   - Código da turma: {codigo_turma}")
+            print(f"   - Atitude observada: {atitude_mapeada.value if hasattr(atitude_mapeada, 'value') else atitude_mapeada}")
+            print(f"   - Conceito habilidade (fallback): {conceito_mapeado.value if hasattr(conceito_mapeado, 'value') else conceito_mapeado}")
+            print(f"   - Início RA: {inicio_ra}")
+            print(f"   - Término RA: {termino_ra}")
+            print(f"   - Arquivo RA: {caminho_arquivo_ra}")
+            
+            # 1. Fazer login
+            print("\n1. Iniciando processo de login...")
+            success, message = self.perform_login(username, password)
+            if not success:
+                return False, f"Falha no login: {message}"
+            
+            # 2. Navegar para o diário
+            print("\n2. Navegando para o diário da turma...")
+            diario_url = f"https://sgn.sesisenai.org.br/pages/diarioClasse/diario-classe.html?idDiario={codigo_turma}"
+            self.driver.get(diario_url)
+            time.sleep(3)
+            
+            # 3. COLETAR AVALIAÇÕES
+            print("\n3. Coletando avaliações cadastradas...")
+            dados_av = self._coletar_avaliacoes_turma()
+            
+            if not dados_av or len(dados_av) == 0:
+                erro_msg = "❌ ERRO CRÍTICO: Nenhuma avaliação encontrada na turma."
+                print(f"   {erro_msg}")
+                raise Exception(erro_msg)
+            
+            dados_rp = self._coletar_recuperacoes_paralelas()
+
+            # 4. Navegar para aba Conceitos
+            print("\n4. Navegando para aba Conceitos...")
+            try:
+                aba_conceitos = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Conceitos')]")
+                aba_conceitos.click()
+                time.sleep(2)
+                print("   ✓ Aba Conceitos acessada")
+            except Exception as e:
+                return False, f"Erro ao acessar aba Conceitos: {e}"
+
+            # 5. Selecionar trimestre
+            print("\n5. Selecionando trimestre de referência...")
+            self._selecionar_trimestre_referencia(trimestre_referencia)
+            
+            # 6. Coletar cabeçalhos
+            print("\n6. Coletando cabeçalhos da tabela de conceitos...")
+            cabecalhos = self._coletar_configuracao_conceitos()
+            
+            # 7. Construir mapeamentos
+            mapeamentos = self._construir_mapeamento_avaliacoes(cabecalhos, dados_av, dados_rp)
+            
+            # PRINTAR RESUMO
+            self._printar_resumo_avaliacoes(dados_av, dados_rp, mapeamentos)
+
+            # 8. Lançar conceitos INTELIGENTES COM RA
+            print("\n8. Iniciando lançamento INTELIGENTE de conceitos COM RA...")
+            print(f"🔧 Usando valores mapeados:")
+            print(f"   - Atitude: {atitude_mapeada}")
+            print(f"   - Conceito (fallback): {conceito_mapeado}")
+            print(f"   - Modo: MANTÉM C + CADASTRA RA")
+            
+            success, message = self._lancar_conceitos_inteligente_com_ra(
+                atitude_observada=atitude_mapeada,
+                conceito_habilidade=conceito_mapeado,
+                trimestre_referencia=trimestre_referencia,
+                mapeamentos_prontos=mapeamentos,
+                inicio_ra=inicio_ra,
+                termino_ra=termino_ra,
+                descricao_ra=descricao_ra,
+                nome_arquivo_ra=nome_arquivo_ra,
+                caminho_arquivo_ra=caminho_arquivo_ra
+            )
+            
+            return success, message
+            
+        except Exception as e:
+            error_msg = f"Erro ao lançar conceitos inteligentes com RA: {str(e)}"
+            print(f"❌ {error_msg}")
+            return False, error_msg
+    
     def login_and_navigate_to_conceitos(self, username, password, codigo_turma):
         """
         MÉTODO LEGADO: Executa o fluxo completo: login -> navegação -> aba conceitos
@@ -1435,6 +1621,136 @@ class SGNAutomation:
         except Exception as e:
             erro = f"Erro durante lançamento de conceitos: {e}"
             print(f"❌ {erro}")
+            return False, erro
+    
+    def _lancar_conceitos_inteligente_com_ra(
+        self,
+        atitude_observada="Raramente",
+        conceito_habilidade="B",
+        trimestre_referencia=None,
+        mapeamentos_prontos=None,
+        inicio_ra=None,
+        termino_ra=None,
+        descricao_ra=None,
+        nome_arquivo_ra=None,
+        caminho_arquivo_ra=None,
+    ):
+        """
+        Lança conceitos INTELIGENTES COM cadastro de RA para habilidades com conceito C
+        
+        Diferenças do _lancar_conceitos_inteligente():
+        - Mantém conceito C (não troca por NE)
+        - Cadastra RA para cada habilidade com C
+        """
+        print("   📋 Processando alunos com conceitos inteligentes COM RA...")
+        print(f"   📋 Atitude observada padrão: '{atitude_observada}'")
+        print(f"   📋 Conceito de habilidade padrão: '{conceito_habilidade}'")
+        print(f"   📋 Modo: MANTÉM C + CADASTRA RA")
+
+        try:
+            if mapeamentos_prontos:
+                mapeamentos = mapeamentos_prontos
+                print("   ✓ Usando mapeamentos já coletados")
+            else:
+                print("   🔍 Coletando configuração de avaliações...")
+                cabecalhos = self._coletar_configuracao_conceitos()
+                print(f"   ✓ Cabeçalhos coletados: {cabecalhos['identificadores']}")
+                
+                dados_av = self._coletar_avaliacoes_turma()
+                if not dados_av or len(dados_av) == 0:
+                    erro_msg = "❌ ERRO CRÍTICO: Nenhuma avaliação encontrada na turma."
+                    print(f"   {erro_msg}")
+                    raise Exception(erro_msg)
+                
+                dados_rp = self._coletar_recuperacoes_paralelas()
+                mapeamentos = self._construir_mapeamento_avaliacoes(cabecalhos, dados_av, dados_rp)
+
+            if not mapeamentos["habilidades"]:
+                print("   ⚠️ AVISO: Nenhuma habilidade vinculada às avaliações. Será usado apenas o conceito padrão.")
+
+            print(f"\n   🔍 DEBUG: mapeamentos['colunas'] = {mapeamentos['colunas']}")
+
+            # Obter lista de alunos COM preview das notas
+            alunos = self._obter_lista_alunos(mapa_colunas=mapeamentos["colunas"])
+            total_alunos = len(alunos)
+            if total_alunos == 0:
+                return False, "Nenhum aluno encontrado na tabela"
+
+            print(f"\n   📋 Encontrados {total_alunos} alunos na turma")
+
+            alunos_processados = 0
+            alunos_com_erro = 0
+            total_ras_cadastradas = 0
+
+            conceito_padrao = getattr(conceito_habilidade, "value", str(conceito_habilidade))
+            atitude_padrao = getattr(atitude_observada, "value", str(atitude_observada))
+
+            for indice, aluno_info in enumerate(alunos, 1):
+                try:
+                    print(f"\n   👤 Processando aluno {indice}/{total_alunos}: {aluno_info['nome']}")
+
+                    # 1️⃣ COLETAR NOTAS DA TABELA PRINCIPAL
+                    notas = self._coletar_notas_aluno(aluno_info, mapeamentos["colunas"])
+                    print(f"      📊 Notas coletadas: {notas}")
+
+                    # 2️⃣ ABRIR A MODAL DE HABILIDADES/ATITUDES
+                    if not self._acessar_aba_notas_aluno(aluno_info):
+                        print(f"   ❌ Não foi possível abrir a modal de notas de {aluno_info['nome']}")
+                        alunos_com_erro += 1
+                        continue
+
+                    # 3️⃣ PREENCHER ATITUDES
+                    if not self._preencher_observacoes_atitudes(atitude_padrao):
+                        print(f"   ⚠️ Observações de atitudes não preenchidas para {aluno_info['nome']}")
+
+                    # 4️⃣ PREENCHER HABILIDADES BASEADO NAS NOTAS (MANTENDO C)
+                    habilidades_com_c = self._preencher_conceitos_habilidades_por_notas_mantendo_c(notas, mapeamentos)
+                    
+                    # 5️⃣ SE TEM HABILIDADES COM C, CADASTRAR RA
+                    if habilidades_com_c and len(habilidades_com_c) > 0:
+                        print(f"   🎓 Aluno tem {len(habilidades_com_c)} habilidade(s) com conceito C")
+                        print(f"   🎓 Cadastrando RA para cada habilidade...")
+                        
+                        ras_cadastradas = self._cadastrar_ra_para_habilidades(
+                            habilidades_com_c=habilidades_com_c,
+                            inicio_ra=inicio_ra,
+                            termino_ra=termino_ra,
+                            descricao_ra=descricao_ra,
+                            nome_arquivo_ra=nome_arquivo_ra,
+                            caminho_arquivo_ra=caminho_arquivo_ra
+                        )
+                        
+                        total_ras_cadastradas += ras_cadastradas
+                        print(f"   ✅ {ras_cadastradas} RA(s) cadastrada(s) para {aluno_info['nome']}")
+
+                    print(f"   ✅ Conceitos aplicados para {aluno_info['nome']} (salvamento automático)")
+                    alunos_processados += 1
+                    
+                    self._fechar_modal_conceitos()
+                    print("")
+
+                except Exception as aluno_erro:
+                    print(f"   ❌ Erro ao processar {aluno_info.get('nome', 'desconhecido')}: {aluno_erro}")
+                    import traceback
+                    traceback.print_exc()
+                    alunos_com_erro += 1
+                    try:
+                        self._fechar_modal_conceitos()
+                    except Exception:
+                        pass
+
+            mensagem = f"Processados: {alunos_processados}/{total_alunos} alunos, {total_ras_cadastradas} RA(s) cadastrada(s)"
+            if alunos_com_erro:
+                mensagem += f", {alunos_com_erro} com erro"
+
+            print(f"\n✅ Lançamento concluído: {mensagem}")
+            return alunos_processados > 0, mensagem
+
+        except Exception as e:
+            erro = f"Erro durante lançamento de conceitos com RA: {e}"
+            print(f"❌ {erro}")
+            import traceback
+            traceback.print_exc()
             return False, erro
     
     def _obter_lista_alunos(self, mapa_colunas=None):
@@ -3109,3 +3425,449 @@ class SGNAutomation:
         except Exception as e:
             # Não é um erro crítico, apenas log
             print(f"   ℹ️ Verificação de modal de senha: {e}")
+    
+    def _preencher_conceitos_habilidades_por_notas_mantendo_c(self, notas_aluno, mapeamentos):
+        """
+        Aplica os conceitos de habilidades baseado nas notas das avaliações
+        MANTENDO conceito C (não troca por NE)
+        
+        Returns:
+            list: Lista de habilidades que receberam conceito C [(data_ri, habilidade_texto), ...]
+        """
+        preenchidos = 0
+        habilidades_com_c = []
+
+        try:
+            print(f"     📝 Preenchendo conceitos de habilidades (MANTENDO C)...")
+            
+            # ETAPA 1: Coletar informações de todas as habilidades
+            tabela_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']/tr[@data-ri]"
+            linhas = WebDriverWait(self.driver, 5).until(
+                EC.presence_of_all_elements_located((By.XPATH, tabela_xpath))
+            )
+            
+            print(f"     📋 Total de habilidades encontradas: {len(linhas)}")
+            
+            # Lista de habilidades a preencher: [(data_ri, habilidade_texto, conceito)]
+            habilidades_para_preencher = []
+
+            for idx, linha in enumerate(linhas):
+                try:
+                    data_ri = linha.get_attribute("data-ri")
+                    cols = linha.find_elements(By.TAG_NAME, "td")
+                    
+                    if len(cols) < 3:
+                        continue
+                    
+                    # Usar textContent via JavaScript
+                    competencia_texto = self.driver.execute_script("return arguments[0].textContent;", cols[0]).strip()
+                    habilidade_texto = self.driver.execute_script("return arguments[0].textContent;", cols[1]).strip()
+                    
+                except Exception as e:
+                    print(f"       ⚠️ Erro ao ler linha {idx}: {e}")
+                    continue
+
+                conceito = ""
+                av_utilizada = None
+                
+                # Procurar em qual avaliação esta habilidade está vinculada
+                for av, habilidades_av in mapeamentos["habilidades"].items():
+                    for h in habilidades_av:
+                        hab_coletada = h["habilidade"].lstrip("*").strip()
+                        hab_modal = habilidade_texto.lstrip("*").strip()
+                        if self._texto_corresponde(hab_modal, hab_coletada):
+                            # REGRA: SEMPRE priorizar RP se existir
+                            recuperacao = mapeamentos["recuperacao_por_avaliacao"].get(av)
+                            conceito_rec = notas_aluno.get(recuperacao, "") if recuperacao else ""
+                            conceito_av = notas_aluno.get(av, "")
+                            
+                            if conceito_rec:
+                                conceito = conceito_rec
+                                av_utilizada = recuperacao
+                                print(f"       🔄 USANDO RP! Habilidade de {av} → Aplicando nota da {recuperacao}: '{conceito_rec}'")
+                            elif conceito_av:
+                                conceito = conceito_av
+                                av_utilizada = av
+
+                            break
+                    if av_utilizada:
+                        break
+
+                # Se encontrou conceito, adicionar à lista
+                if av_utilizada and conceito:
+                    habilidade_curta = habilidade_texto[:50] if len(habilidade_texto) > 50 else habilidade_texto
+                    print(f"       ✓ {habilidade_curta[:40]}... → {conceito}")
+                    habilidades_para_preencher.append((data_ri, habilidade_texto, conceito))
+                    
+                    # Se conceito é C, adicionar à lista de habilidades com C
+                    if conceito.upper() == "C":
+                        habilidades_com_c.append((data_ri, habilidade_texto))
+
+            # ETAPA 2: Aplicar conceitos via JavaScript
+            print(f"     🔧 Aplicando {len(habilidades_para_preencher)} conceitos...")
+            
+            for data_ri, habilidade_texto, conceito in habilidades_para_preencher:
+                try:
+                    # Construir o ID do select
+                    select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
+                    
+                    # Tentar até 3 vezes
+                    max_tentativas = 3
+                    sucesso = False
+                    
+                    for tentativa in range(1, max_tentativas + 1):
+                        try:
+                            script = f"""
+                            var select = document.getElementById('{select_id}');
+                            if (select) {{
+                                var valorAtual = select.value;
+                                if (valorAtual !== '{conceito}') {{
+                                    select.value = '{conceito}';
+                                    
+                                    var options = select.options;
+                                    for (var i = 0; i < options.length; i++) {{
+                                        if (options[i].value === '{conceito}') {{
+                                            options[i].selected = true;
+                                        }} else {{
+                                            options[i].selected = false;
+                                        }}
+                                    }}
+                                    
+                                    var event = new Event('change', {{ bubbles: true, cancelable: true }});
+                                    select.dispatchEvent(event);
+                                    
+                                    return true;
+                                }}
+                                return false;
+                            }}
+                            return null;
+                            """
+                            
+                            resultado = self.driver.execute_script(script)
+                            
+                            if resultado is True:
+                                time.sleep(0.5)
+                                
+                                script_verificar = f"""
+                                var select = document.getElementById('{select_id}');
+                                return select ? select.value : null;
+                                """
+                                valor_atual = self.driver.execute_script(script_verificar)
+                                
+                                if valor_atual == conceito:
+                                    preenchidos += 1
+                                    sucesso = True
+                                    break
+                                else:
+                                    if tentativa < max_tentativas:
+                                        print(f"          ⚠️ Tentativa {tentativa}: Valor não aplicado, retentando...")
+                                        time.sleep(0.5)
+                            elif resultado is False:
+                                sucesso = True
+                                break
+                            else:
+                                print(f"          ⚠️ Select não encontrado: {select_id}")
+                                break
+                                
+                        except Exception as e_tentativa:
+                            if tentativa < max_tentativas:
+                                print(f"          ⚠️ Erro na tentativa {tentativa}, retentando: {str(e_tentativa)[:50]}")
+                                time.sleep(0.5)
+                            else:
+                                raise e_tentativa
+                    
+                    if not sucesso:
+                        print(f"          ❌ Não foi possível aplicar conceito após {max_tentativas} tentativas")
+                        
+                except Exception as e:
+                    print(f"          ❌ Erro ao aplicar conceito para data-ri={data_ri}: {e}")
+
+            print(f"     ✅ Total: {preenchidos} habilidades preenchidas, {len(habilidades_com_c)} com conceito C")
+
+        except Exception as e:
+            print(f"     ❌ Erro ao preencher conceitos de habilidades: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+        return habilidades_com_c
+    
+    def _cadastrar_ra_para_habilidades(
+        self,
+        habilidades_com_c,
+        inicio_ra,
+        termino_ra,
+        descricao_ra,
+        nome_arquivo_ra,
+        caminho_arquivo_ra
+    ):
+        """
+        Cadastra Recomposição de Aprendizagem para cada habilidade com conceito C
+        
+        Args:
+            habilidades_com_c: Lista de tuplas [(data_ri, habilidade_texto), ...]
+            inicio_ra: Data de início (DD/MM/YYYY)
+            termino_ra: Data de término (DD/MM/YYYY)
+            descricao_ra: Descrição da RA
+            nome_arquivo_ra: Nome do arquivo PDF
+            caminho_arquivo_ra: Caminho completo do arquivo PDF
+            
+        Returns:
+            int: Número de RAs cadastradas
+        """
+        ras_cadastradas = 0
+        
+        try:
+            print(f"     🎓 Cadastrando RA para {len(habilidades_com_c)} habilidade(s)...")
+            
+            for idx, (data_ri, habilidade_texto) in enumerate(habilidades_com_c):
+                try:
+                    print(f"       📝 Cadastrando RA {idx+1}/{len(habilidades_com_c)}: {habilidade_texto[:60]}...")
+                    
+                    # 1. Clicar no botão "Adicionar" da seção de RA
+                    btn_adicionar_ra = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.ID, "formAtitudes:panelAtitudes:btnAdicionarPPE"))
+                    )
+                    self.driver.execute_script("arguments[0].click();", btn_adicionar_ra)
+                    time.sleep(2)
+                    print(f"         ✓ Botão Adicionar RA clicado")
+                    
+                    # Aguardar modal carregar completamente
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.ID, "formPPE:tabPanelCadastroPPE:habilidadePPE_input"))
+                    )
+                    time.sleep(1)
+                    print(f"         ✓ Modal de RA carregada")
+                    
+                    # 2. Selecionar a habilidade no dropdown
+                    # IMPORTANTE: O valor do select é o data-ri da habilidade no modal
+                    # Precisamos usar o data_ri que foi coletado
+                    
+                    # Selecionar via JavaScript
+                    script_select = f"""
+                    var select = document.getElementById('formPPE:tabPanelCadastroPPE:habilidadePPE_input');
+                    select.value = '{data_ri}';
+                    
+                    // Marcar option como selected
+                    var options = select.options;
+                    for (var i = 0; i < options.length; i++) {{
+                        if (options[i].value === '{data_ri}') {{
+                            options[i].selected = true;
+                        }} else {{
+                            options[i].selected = false;
+                        }}
+                    }}
+                    
+                    // Disparar evento change para PrimeFaces
+                    var event = new Event('change', {{ bubbles: true, cancelable: true }});
+                    select.dispatchEvent(event);
+                    """
+                    self.driver.execute_script(script_select)
+                    time.sleep(1.5)
+                    print(f"         ✓ Habilidade selecionada (data-ri: {data_ri})")
+                    
+                    # 3. Preencher data de início
+                    input_inicio = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((By.ID, "formPPE:tabPanelCadastroPPE:inicioPPE_input"))
+                    )
+                    self.driver.execute_script("arguments[0].value = '';", input_inicio)
+                    input_inicio.send_keys(inicio_ra)
+                    # Disparar evento change
+                    self.driver.execute_script("""
+                        var elem = arguments[0];
+                        var event = new Event('change', { bubbles: true });
+                        elem.dispatchEvent(event);
+                    """, input_inicio)
+                    time.sleep(1)
+                    print(f"         ✓ Data início: {inicio_ra}")
+                    
+                    # 4. Preencher data de término
+                    input_termino = self.driver.find_element(By.ID, "formPPE:tabPanelCadastroPPE:terminoPPE_input")
+                    self.driver.execute_script("arguments[0].value = '';", input_termino)
+                    input_termino.send_keys(termino_ra)
+                    # Disparar evento change
+                    self.driver.execute_script("""
+                        var elem = arguments[0];
+                        var event = new Event('change', { bubbles: true });
+                        elem.dispatchEvent(event);
+                    """, input_termino)
+                    time.sleep(1)
+                    print(f"         ✓ Data término: {termino_ra}")
+                    
+                    # 5. Preencher descrição (editor Quill)
+                    # Formatar descrição como HTML se não estiver
+                    descricao_html = descricao_ra if descricao_ra.startswith('<') else f"<p>{descricao_ra}</p>"
+                    
+                    # Atualizar editor visual Quill
+                    try:
+                        editor_descricao = self.driver.find_element(By.CSS_SELECTOR, "#formPPE\\:tabPanelCadastroPPE\\:editorDescricao\\:editorDescricao_editor .ql-editor")
+                        self.driver.execute_script("arguments[0].innerHTML = arguments[1];", editor_descricao, descricao_html)
+                    except:
+                        print(f"         ⚠️ Editor visual não encontrado, tentando alternativa...")
+                    
+                    # Atualizar campo hidden (CRÍTICO)
+                    input_hidden = self.driver.find_element(By.ID, "formPPE:tabPanelCadastroPPE:editorDescricao:editorDescricao_input")
+                    self.driver.execute_script("arguments[0].value = arguments[1];", input_hidden, descricao_html)
+                    time.sleep(0.5)
+                    print(f"         ✓ Descrição preenchida")
+                    
+                    # 6. Clicar na aba "Anexo"
+                    try:
+                        # Tentar clicar via JavaScript para evitar problemas de overlay
+                        aba_anexo = WebDriverWait(self.driver, 5).until(
+                            EC.presence_of_element_located((By.XPATH, "//a[contains(text(), 'Anexo')]"))
+                        )
+                        self.driver.execute_script("arguments[0].click();", aba_anexo)
+                        time.sleep(1.5)
+                        print(f"         ✓ Aba Anexo aberta")
+                    except Exception as e:
+                        print(f"         ⚠️ Erro ao clicar na aba Anexo: {e}")
+                        # Tentar via índice do TabView
+                        self.driver.execute_script("""
+                            var tabView = PF('widget_formPPE_tabPanelCadastroPPE');
+                            if (tabView) tabView.select(1);
+                        """)
+                        time.sleep(1.5)
+                    
+                    # 7. Clicar em "Adicionar Anexo"
+                    btn_adicionar_anexo = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((By.ID, "formPPE:tabPanelCadastroPPE:adicionarAnexoPPE"))
+                    )
+                    self.driver.execute_script("arguments[0].click();", btn_adicionar_anexo)
+                    time.sleep(2)
+                    print(f"         ✓ Botão Adicionar Anexo clicado")
+                    
+                    # Aguardar modal de anexo carregar
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.ID, "formAnexoPlanoPessoalEstudo:cadastroAnexo:nome"))
+                    )
+                    time.sleep(1)
+                    print(f"         ✓ Modal de anexo carregada")
+                    
+                    # 8. Preencher nome do arquivo
+                    input_nome_arquivo = self.driver.find_element(By.ID, "formAnexoPlanoPessoalEstudo:cadastroAnexo:nome")
+                    self.driver.execute_script("arguments[0].value = '';", input_nome_arquivo)
+                    input_nome_arquivo.send_keys(nome_arquivo_ra)
+                    # Disparar evento change
+                    self.driver.execute_script("""
+                        var elem = arguments[0];
+                        var event = new Event('change', { bubbles: true });
+                        elem.dispatchEvent(event);
+                    """, input_nome_arquivo)
+                    time.sleep(1)
+                    print(f"         ✓ Nome do arquivo: {nome_arquivo_ra}")
+                    
+                    # 9. Fazer upload do arquivo (PrimeFaces FileUpload com auto=true)
+                    input_file = self.driver.find_element(By.ID, "formAnexoPlanoPessoalEstudo:cadastroAnexo:arquivo_input")
+                    input_file.send_keys(caminho_arquivo_ra)
+                    print(f"         ✓ Arquivo selecionado: {caminho_arquivo_ra}")
+                    
+                    # Aguardar upload automático completar (PrimeFaces auto=true)
+                    time.sleep(3)
+                    
+                    # Verificar se upload foi bem-sucedido
+                    try:
+                        # Verificar se o nome do arquivo foi preenchido automaticamente
+                        nome_atual = self.driver.execute_script(
+                            "return document.getElementById('formAnexoPlanoPessoalEstudo:cadastroAnexo:nome').value;"
+                        )
+                        if nome_atual:
+                            print(f"         ✓ Upload automático concluído")
+                        else:
+                            print(f"         ⚠️ Upload pode não ter completado, aguardando mais...")
+                            time.sleep(2)
+                    except:
+                        pass
+                    
+                    # 10. Salvar anexo
+                    btn_salvar_anexo = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((By.ID, "formAnexoPlanoPessoalEstudo:cadastroAnexo:salvarAnexo"))
+                    )
+                    self.driver.execute_script("arguments[0].click();", btn_salvar_anexo)
+                    time.sleep(2)
+                    print(f"         ✓ Botão Salvar Anexo clicado")
+                    
+                    # Aguardar modal de anexo fechar
+                    try:
+                        WebDriverWait(self.driver, 5).until(
+                            EC.invisibility_of_element_located((By.ID, "modalPlanoPessoalEstudoAnexo"))
+                        )
+                        print(f"         ✓ Modal de anexo fechada")
+                    except:
+                        # Forçar fechamento via JavaScript
+                        self.driver.execute_script("PF('modalPlanoPessoalEstudoAnexo').hide();")
+                        time.sleep(1)
+                    
+                    # Aguardar tabela de anexos atualizar
+                    time.sleep(1)
+                    
+                    # 11. Voltar para aba "Dados Gerais" (não é necessário, mas vamos garantir)
+                    try:
+                        aba_dados_gerais = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Dados Gerais')]")
+                        self.driver.execute_script("arguments[0].click();", aba_dados_gerais)
+                        time.sleep(1)
+                        print(f"         ✓ Voltou para Dados Gerais")
+                    except:
+                        # Tentar via índice do TabView
+                        self.driver.execute_script("""
+                            var tabView = PF('widget_formPPE_tabPanelCadastroPPE');
+                            if (tabView) tabView.select(0);
+                        """)
+                        time.sleep(1)
+                    
+                    # 12. Salvar a RA
+                    btn_salvar_ra = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((By.ID, "formPPE:salvarPPE"))
+                    )
+                    self.driver.execute_script("arguments[0].click();", btn_salvar_ra)
+                    time.sleep(3)
+                    print(f"         ✓ Botão Salvar RA clicado")
+                    
+                    # Aguardar modal de RA fechar
+                    try:
+                        WebDriverWait(self.driver, 5).until(
+                            EC.invisibility_of_element_located((By.ID, "modalPPE"))
+                        )
+                        print(f"         ✅ RA cadastrada com sucesso!")
+                    except:
+                        # Forçar fechamento via JavaScript
+                        self.driver.execute_script("PF('modalPPE').hide();")
+                        time.sleep(1)
+                        print(f"         ✅ RA salva (modal fechada via JS)")
+                    
+                    ras_cadastradas += 1
+                    time.sleep(1)  # Pausa entre cadastros
+                    
+                except Exception as e:
+                    print(f"         ❌ Erro ao cadastrar RA para habilidade: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    
+                    # Tentar fechar modais em caso de erro
+                    try:
+                        self.driver.execute_script("PF('modalPlanoPessoalEstudoAnexo').hide();")
+                        time.sleep(0.5)
+                    except:
+                        pass
+                    try:
+                        self.driver.execute_script("PF('modalPPE').hide();")
+                        time.sleep(0.5)
+                    except:
+                        pass
+                    
+                    # Tentar fechar via botão X
+                    try:
+                        close_btn = self.driver.find_element(By.CSS_SELECTOR, ".ui-dialog-titlebar-close")
+                        close_btn.click()
+                        time.sleep(0.5)
+                    except:
+                        pass
+            
+            print(f"     ✅ Total de RAs cadastradas: {ras_cadastradas}/{len(habilidades_com_c)}")
+            return ras_cadastradas
+            
+        except Exception as e:
+            print(f"     ❌ Erro ao cadastrar RAs: {e}")
+            import traceback
+            traceback.print_exc()
+            return ras_cadastradas
