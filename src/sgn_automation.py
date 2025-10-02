@@ -2858,40 +2858,37 @@ class SGNAutomation:
         """
         Aplica os conceitos de habilidades baseado nas notas das avaliações
         
-        Para cada habilidade na modal:
-        1. Identifica a qual avaliação ela pertence
-        2. Busca a nota do aluno naquela avaliação
-        3. Se tem recuperação, usa a nota da recuperação
-        4. Se não encontrou mapeamento, deixa vazio
+        NOVA ABORDAGEM: Usa AJAX direto para evitar problemas de stale element
+        O PrimeFaces recarrega a tabela via AJAX após cada mudança, então precisamos:
+        1. Coletar TODAS as habilidades e seus conceitos ANTES de aplicar
+        2. Aplicar conceitos via AJAX (POST) um por vez
+        3. Aguardar cada AJAX completar antes do próximo
         """
         preenchidos = 0
 
         try:
             print(f"     📝 Preenchendo conceitos de habilidades baseado nas notas...")
             
-            # Re-localizar a tabela para evitar stale element
+            # ETAPA 1: Coletar informações de todas as habilidades
             tabela_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']/tr[@data-ri]"
             linhas = WebDriverWait(self.driver, 5).until(
                 EC.presence_of_all_elements_located((By.XPATH, tabela_xpath))
             )
             
             print(f"     📋 Total de habilidades encontradas: {len(linhas)}")
+            
+            # Lista de habilidades a preencher: [(data_ri, habilidade_texto, conceito)]
+            habilidades_para_preencher = []
 
             for idx, linha in enumerate(linhas):
                 try:
-                    # Re-localizar a linha para evitar stale element
-                    linhas_atualizadas = self.driver.find_elements(By.XPATH, tabela_xpath)
-                    if idx >= len(linhas_atualizadas):
-                        continue
-                    linha = linhas_atualizadas[idx]
-                    
                     data_ri = linha.get_attribute("data-ri")
                     cols = linha.find_elements(By.TAG_NAME, "td")
                     
                     if len(cols) < 3:
                         continue
                     
-                    # Usar textContent via JavaScript para garantir que pegamos o texto
+                    # Usar textContent via JavaScript
                     competencia_texto = self.driver.execute_script("return arguments[0].textContent;", cols[0]).strip()
                     habilidade_texto = self.driver.execute_script("return arguments[0].textContent;", cols[1]).strip()
                     
@@ -2899,74 +2896,128 @@ class SGNAutomation:
                     print(f"       ⚠️ Erro ao ler linha {idx}: {e}")
                     continue
 
-                conceito = ""  # Vazio por padrão
+                conceito = ""
                 av_utilizada = None
-                tipo_origem = None
                 
-                # Procurar em qual avaliação esta habilidade está vinculada (otimizado)
+                # Procurar em qual avaliação esta habilidade está vinculada
                 for av, habilidades_av in mapeamentos["habilidades"].items():
                     for h in habilidades_av:
-                        # Remover asterisco (*) do início da habilidade coletada para comparação
                         hab_coletada = h["habilidade"].lstrip("*").strip()
                         hab_modal = habilidade_texto.lstrip("*").strip()
                         if self._texto_corresponde(hab_modal, hab_coletada):
-                            # Encontrou! Esta habilidade pertence a esta avaliação
-                            # REGRA: SEMPRE priorizar RP se existir, senão usar AV
+                            # REGRA: SEMPRE priorizar RP se existir
                             recuperacao = mapeamentos["recuperacao_por_avaliacao"].get(av)
                             conceito_rec = notas_aluno.get(recuperacao, "") if recuperacao else ""
                             conceito_av = notas_aluno.get(av, "")
                             
-                            # Priorizar RP sobre AV (mesmo que AV tenha nota)
                             if conceito_rec:
-                                # Tem recuperação com nota: SEMPRE usar RP
                                 conceito = conceito_rec
                                 av_utilizada = recuperacao
-                                tipo_origem = "recuperação"
                                 print(f"       🔄 USANDO RP! Habilidade de {av} → Aplicando nota da {recuperacao}: '{conceito_rec}'")
                             elif conceito_av:
-                                # Não tem RP ou RP está vazia: usar AV
                                 conceito = conceito_av
                                 av_utilizada = av
-                                tipo_origem = "avaliação"
-                            # Se ambos estão vazios, conceito fica vazio
 
                             break
                     if av_utilizada:
                         break
 
-                # Preparar mensagem detalhada
-                habilidade_curta = habilidade_texto[:50] if len(habilidade_texto) > 50 else habilidade_texto
-                
+                # Se encontrou conceito, adicionar à lista
                 if av_utilizada and conceito:
+                    habilidade_curta = habilidade_texto[:50] if len(habilidade_texto) > 50 else habilidade_texto
                     print(f"       ✓ {habilidade_curta[:40]}... → {conceito}")
-                elif av_utilizada and not conceito:
-                    continue
-                else:
-                    continue  # Não mapeada, pula
+                    habilidades_para_preencher.append((data_ri, habilidade_texto, conceito))
 
-                # Aplicar o conceito
-                select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
+            # ETAPA 2: Aplicar conceitos via JavaScript (simula AJAX do PrimeFaces)
+            print(f"     🔧 Aplicando {len(habilidades_para_preencher)} conceitos...")
+            
+            for data_ri, habilidade_texto, conceito in habilidades_para_preencher:
                 try:
-                    # Re-localizar a linha inteira para evitar stale element
-                    time.sleep(0.1)  # Pequeno delay para estabilizar o DOM
-                    linhas_refresh = self.driver.find_elements(By.XPATH, tabela_xpath)
-                    if idx < len(linhas_refresh):
-                        linha_refresh = linhas_refresh[idx]
-                        select_element = linha_refresh.find_element(By.XPATH, f".//select[contains(@id, 'notaConceito_input')]")
-                        valor_atual = select_element.get_attribute("value") or ""
-                        if valor_atual != conceito:
-                            self.driver.execute_script(
-                                "arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
-                                select_element, conceito
-                            )
-                            preenchidos += 1
-                except Exception as select_error:
-                    print(f"          ❌ Erro ao aplicar conceito: {select_error}")
+                    # Construir o ID do select
+                    select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
+                    
+                    # Tentar até 3 vezes para garantir que o conceito foi aplicado
+                    max_tentativas = 3
+                    sucesso = False
+                    
+                    for tentativa in range(1, max_tentativas + 1):
+                        try:
+                            # Usar JavaScript para definir o valor e disparar o evento change
+                            script = f"""
+                            var select = document.getElementById('{select_id}');
+                            if (select) {{
+                                var valorAtual = select.value;
+                                if (valorAtual !== '{conceito}') {{
+                                    select.value = '{conceito}';
+                                    
+                                    // Marcar como selected no option correspondente
+                                    var options = select.options;
+                                    for (var i = 0; i < options.length; i++) {{
+                                        if (options[i].value === '{conceito}') {{
+                                            options[i].selected = true;
+                                        }} else {{
+                                            options[i].selected = false;
+                                        }}
+                                    }}
+                                    
+                                    // Disparar evento change que o PrimeFaces escuta
+                                    var event = new Event('change', {{ bubbles: true, cancelable: true }});
+                                    select.dispatchEvent(event);
+                                    
+                                    return true;
+                                }}
+                                return false;
+                            }}
+                            return null;
+                            """
+                            
+                            resultado = self.driver.execute_script(script)
+                            
+                            if resultado is True:
+                                # Aguardar AJAX processar
+                                time.sleep(0.5)
+                                
+                                # Verificar se o valor foi realmente aplicado
+                                script_verificar = f"""
+                                var select = document.getElementById('{select_id}');
+                                return select ? select.value : null;
+                                """
+                                valor_atual = self.driver.execute_script(script_verificar)
+                                
+                                if valor_atual == conceito:
+                                    preenchidos += 1
+                                    sucesso = True
+                                    break
+                                else:
+                                    if tentativa < max_tentativas:
+                                        print(f"          ⚠️ Tentativa {tentativa}: Valor não aplicado, retentando...")
+                                        time.sleep(0.5)
+                            elif resultado is False:
+                                # Já estava com o valor correto
+                                sucesso = True
+                                break
+                            else:
+                                print(f"          ⚠️ Select não encontrado: {select_id}")
+                                break
+                                
+                        except Exception as e_tentativa:
+                            if tentativa < max_tentativas:
+                                print(f"          ⚠️ Erro na tentativa {tentativa}, retentando: {str(e_tentativa)[:50]}")
+                                time.sleep(0.5)
+                            else:
+                                raise e_tentativa
+                    
+                    if not sucesso:
+                        print(f"          ❌ Não foi possível aplicar conceito após {max_tentativas} tentativas")
+                        
+                except Exception as e:
+                    print(f"          ❌ Erro ao aplicar conceito para data-ri={data_ri}: {e}")
 
             print(f"     ✅ Total: {preenchidos} habilidades preenchidas")
 
         except Exception as e:
             print(f"     ❌ Erro ao preencher conceitos de habilidades: {e}")
+            import traceback
             traceback.print_exc()
             return False
 
