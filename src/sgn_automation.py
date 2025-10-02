@@ -1066,6 +1066,64 @@ class SGNAutomation:
             print(f"   ❌ Erro ao clicar em {element_description}: {str(e)}")
             raise
     
+    def _open_pedagogico_tab(self):
+        """
+        Abre a aba Pedagógico no diário da turma
+        
+        Este método:
+        1. Localiza a aba/link de "Pedagógico" na página do diário
+        2. Aguarda até que o elemento seja clicável
+        3. Clica na aba para abri-la usando clique seguro (evita interceptações)
+        4. Aguarda o carregamento do conteúdo da aba
+        
+        Raises:
+            TimeoutException: Se a aba Pedagógico não for encontrada no tempo limite
+        """
+        print("Abrindo aba Pedagógico...")
+        
+        # Lista de seletores para tentar (do mais específico ao mais genérico)
+        selectors = [
+            ("//a[contains(text(), 'Pedagógico')]", "Link com texto 'Pedagógico'"),
+            ("//a[contains(@href, 'abaPedagogico')]", "Link com href contendo 'abaPedagogico'"),
+            ("//li//a[contains(text(), 'Pedagógico')]", "Item de lista com link 'Pedagógico'"),
+        ]
+        
+        for i, (selector, description) in enumerate(selectors, 1):
+            try:
+                print(f"   🔍 Tentativa {i}: {description}")
+                pedagogico_tab = WebDriverWait(self.driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, selector))
+                )
+                
+                # Usar clique seguro (evita interceptações)
+                self._click_safe(pedagogico_tab, f"Aba Pedagógico ({description})")
+                
+                # Aguardar carregamento AJAX da aba
+                print("   ⏳ Aguardando aba Pedagógico carregar...")
+                time.sleep(3)
+                
+                # Verificar se o dropdown de alunos está presente (sinal de sucesso)
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.ID, "tabViewDiarioClasse:formAbaPedagogico:selectEstudantes"))
+                    )
+                    print("✅ Aba Pedagógico aberta com sucesso")
+                    return
+                except:
+                    print("   ⚠️ Dropdown de alunos não encontrado, tentando próximo seletor...")
+                    continue
+                    
+            except Exception as e:
+                print(f"   ❌ Falhou com {description}: {str(e)[:100]}")
+                continue
+        
+        # Se chegou até aqui, nenhum seletor funcionou
+        print("   📸 Tirando screenshot para debug...")
+        self.driver.save_screenshot("debug_pedagogico_tab.png")
+        print("   📸 Screenshot salvo como 'debug_pedagogico_tab.png'")
+        
+        raise Exception("Não foi possível encontrar a aba Pedagógico com nenhum seletor")
+    
     def _open_conceitos_tab(self):
         """
         Abre a aba de Conceitos no diário da turma
@@ -1103,20 +1161,52 @@ class SGNAutomation:
                 # Usar clique seguro (evita interceptações)
                 self._click_safe(conceitos_tab, f"Aba Conceitos ({description})")
                 
-                # Aguardar carregamento
+                # Aguardar carregamento AJAX da aba
                 print("   ⏳ Aguardando aba de Conceitos carregar...")
                 time.sleep(3)
                 
                 # Verificar se a tabela de alunos está presente (sinal de sucesso)
+                # Usar mesma lógica do _obter_lista_alunos que funciona
+                tabela_encontrada = False
+                
+                # XPath principal usado pelos endpoints que funcionam
+                tabela_xpath = "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/div/div[7]/form/div/div/span/span/div[2]/div/div[2]/table/tbody"
+                
                 try:
-                    tabela_xpath = "/html/body/div[3]/div[3]/div[2]/div[2]/div/div/div/div[7]/form/div/div/span/span/div[2]/div/div[2]/table/tbody"
+                    print(f"   🔍 Verificando tabela principal: {tabela_xpath}")
                     WebDriverWait(self.driver, 10).until(
                         EC.presence_of_element_located((By.XPATH, tabela_xpath))
                     )
-                    print("   ✅ Tabela de alunos encontrada - aba carregada corretamente")
+                    tabela_encontrada = True
+                    print("   ✅ Tabela de alunos encontrada com XPath principal")
+                except:
+                    print("   ⚠️ Tabela não encontrada com XPath principal, tentando alternativas...")
+                    
+                    # XPaths alternativos (mesmos usados em _obter_lista_alunos)
+                    alternative_table_xpaths = [
+                        "//table//tbody[contains(@class, 'ui-datatable-data')]",
+                        "//div[contains(@class, 'ui-datatable')]//tbody",
+                        "//form//table//tbody",
+                        "//div[7]//table//tbody",
+                        "//span//div[2]//table//tbody"
+                    ]
+                    
+                    for alt_xpath in alternative_table_xpaths:
+                        try:
+                            print(f"   🔄 Tentando: {alt_xpath}")
+                            WebDriverWait(self.driver, 5).until(
+                                EC.presence_of_element_located((By.XPATH, alt_xpath))
+                            )
+                            tabela_encontrada = True
+                            print(f"   ✅ Tabela encontrada com XPath alternativo: {alt_xpath}")
+                            break
+                        except:
+                            continue
+                
+                if tabela_encontrada:
                     print("✅ Aba de Conceitos aberta com sucesso")
                     return
-                except:
+                else:
                     print("   ⚠️ Tabela de alunos não encontrada, tentando próximo seletor...")
                     continue
                     
@@ -1924,8 +2014,8 @@ class SGNAutomation:
             # Clicar via JavaScript para evitar interceptação
             self.driver.execute_script("arguments[0].click();", aba_notas_button)
             
-            # Aguardar modal/aba carregar
-            time.sleep(2)
+            # Aguardar modal/aba carregar (otimizado)
+            time.sleep(1)
             
             print(f"     ✅ Aba de notas acessada")
             return True
@@ -3866,27 +3956,46 @@ class SGNAutomation:
     def _calcular_moda_conceitos(self, conceitos):
         """
         Calcula a moda (valor mais frequente) dos conceitos de um aluno
+        COM ARREDONDAMENTO PARA BAIXO em caso de empate.
+        
+        Regra: A=4, B=3, C=2, NE=1
+        Em caso de empate, escolhe o conceito de menor valor (arredonda para baixo)
         
         Args:
-            conceitos (list): Lista de conceitos (ex: ['A', 'B', 'B', 'C', 'B'])
+            conceitos (list): Lista de conceitos (ex: ['A', 'B', 'A', 'B'])
             
         Returns:
-            str: Conceito mais frequente (moda)
+            str: Conceito predominante (com arredondamento para baixo)
             
-        Example:
-            ['A', 'B', 'B', 'C', 'B'] -> 'B'
-            ['A', 'A', 'C'] -> 'A'
+        Examples:
+            ['A', 'B', 'A', 'B'] -> 'B' (empate, escolhe menor)
+            ['A', 'C', 'A', 'C'] -> 'C' (empate, escolhe menor)
+            ['A', 'NE', 'A', 'NE'] -> 'NE' (empate, escolhe menor)
+            ['A', 'B', 'C'] -> 'C' (empate triplo, escolhe menor)
+            ['B', 'B', 'B', 'A'] -> 'B' (B é mais frequente)
         """
         from collections import Counter
         
         if not conceitos:
             return None
         
+        # Valores dos conceitos (menor = pior)
+        valores = {'A': 4, 'B': 3, 'C': 2, 'NE': 1}
+        
         # Contar frequência de cada conceito
         contador = Counter(conceitos)
         
-        # Retornar o conceito mais comum
-        moda = contador.most_common(1)[0][0]
+        # Encontrar a frequência máxima
+        freq_maxima = max(contador.values())
+        
+        # Pegar todos os conceitos com frequência máxima (empate)
+        conceitos_empatados = [c for c, freq in contador.items() if freq == freq_maxima]
+        
+        # Se há empate, escolher o de menor valor (arredondamento para baixo)
+        if len(conceitos_empatados) > 1:
+            moda = min(conceitos_empatados, key=lambda c: valores.get(c, 0))
+        else:
+            moda = conceitos_empatados[0]
         
         return moda
     
@@ -3912,74 +4021,102 @@ class SGNAutomation:
         alunos_conceitos = {}
         
         try:
-            # Aguardar tabela de alunos carregar
-            time.sleep(2)
+            # Usar mesma lógica de _obter_lista_alunos que funciona
+            alunos = self._obter_lista_alunos()
+            total_alunos = len(alunos)
             
-            # Encontrar todas as linhas de alunos na tabela
-            linhas_alunos = self.driver.find_elements(
-                By.CSS_SELECTOR,
-                "tbody[id*='tabelaConceitos_data'] tr[data-ri]"
-            )
+            if total_alunos == 0:
+                print("   ❌ Nenhum aluno encontrado na tabela")
+                return alunos_conceitos
             
-            total_alunos = len(linhas_alunos)
             print(f"   ✓ Encontrados {total_alunos} alunos")
             
-            for idx, linha in enumerate(linhas_alunos, 1):
+            for idx, aluno_info in enumerate(alunos, 1):
                 try:
-                    # Obter nome do aluno (primeira célula)
-                    nome_celula = linha.find_element(By.CSS_SELECTOR, "td:first-child")
-                    nome_completo = nome_celula.text.strip()
+                    nome_completo = aluno_info['nome']
                     nome_limpo = self._limpar_nome_aluno(nome_completo)
                     
                     print(f"\n   [{idx}/{total_alunos}] Processando: {nome_limpo}")
                     
-                    # Clicar no botão de editar (ícone de lápis) para abrir modal
-                    btn_editar = linha.find_element(By.CSS_SELECTOR, "a[title='Editar'] i.fa-pencil")
-                    self.driver.execute_script("arguments[0].scrollIntoView(true);", btn_editar)
-                    time.sleep(0.5)
-                    btn_editar.click()
-                    time.sleep(2)
+                    # Usar método que funciona para abrir modal
+                    if not self._acessar_aba_notas_aluno(aluno_info):
+                        print(f"      ❌ Não foi possível abrir modal de {nome_limpo}")
+                        continue
                     
                     # Aguardar modal abrir
                     WebDriverWait(self.driver, 10).until(
                         EC.visibility_of_element_located((By.ID, "modalDadosAtitudes"))
                     )
                     
-                    # Clicar no accordion "Conceitos das Habilidades" para expandir
-                    try:
-                        accordion_header = self.driver.find_element(
-                            By.XPATH,
-                            "//span[contains(text(), 'Conceitos das Habilidades')]/parent::div"
-                        )
-                        self.driver.execute_script("arguments[0].click();", accordion_header)
-                        time.sleep(1)
-                    except:
-                        print("      ⚠️ Accordion já expandido ou não encontrado")
+                    # Accordion já vem expandido por padrão, não precisa clicar
+                    # Apenas aguardar a tabela estar presente
                     
                     # Coletar todos os conceitos das habilidades
                     conceitos = []
                     try:
+                        # Aguardar tabela estar presente (sem sleep fixo)
+                        WebDriverWait(self.driver, 3).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "tbody[id*='dataTableHabilidades_data'] tr[data-ri]"))
+                        )
+                        
                         # Encontrar todas as linhas da tabela de habilidades
                         linhas_habilidades = self.driver.find_elements(
                             By.CSS_SELECTOR,
                             "tbody[id*='dataTableHabilidades_data'] tr[data-ri]"
                         )
                         
-                        for linha_hab in linhas_habilidades:
+                        print(f"      🔍 Encontradas {len(linhas_habilidades)} linhas de habilidades")
+                        
+                        for idx_hab, linha_hab in enumerate(linhas_habilidades):
                             try:
-                                # Encontrar o select de conceito (terceira coluna)
+                                # MÉTODO 1: Tentar ler do <select> com selected="selected"
                                 select_conceito = linha_hab.find_element(
                                     By.CSS_SELECTOR,
                                     "select[id*='notaConceito_input']"
                                 )
                                 
-                                # Obter valor selecionado
-                                conceito_selecionado = Select(select_conceito).first_selected_option.text.strip()
+                                # Buscar option com selected="selected"
+                                try:
+                                    option_selecionada = select_conceito.find_element(
+                                        By.CSS_SELECTOR,
+                                        "option[selected='selected']"
+                                    )
+                                    conceito_selecionado = option_selecionada.get_attribute("value")
+                                    
+                                    if conceito_selecionado and conceito_selecionado != "":
+                                        conceitos.append(conceito_selecionado)
+                                        print(f"         [{idx_hab+1}] Conceito: {conceito_selecionado}")
+                                        continue
+                                except:
+                                    pass
                                 
-                                # Adicionar à lista se não for "Selecione"
-                                if conceito_selecionado and conceito_selecionado != "Selecione":
-                                    conceitos.append(conceito_selecionado)
-                            except:
+                                # MÉTODO 2: Tentar ler do <label> que exibe o valor
+                                try:
+                                    label_conceito = linha_hab.find_element(
+                                        By.CSS_SELECTOR,
+                                        "label[id*='notaConceito_label']"
+                                    )
+                                    conceito_texto = label_conceito.text.strip()
+                                    
+                                    # Verificar se não é vazio ou &nbsp;
+                                    if conceito_texto and conceito_texto not in ["", "Selecione", "\xa0"]:
+                                        conceitos.append(conceito_texto)
+                                        print(f"         [{idx_hab+1}] Conceito (label): {conceito_texto}")
+                                        continue
+                                except:
+                                    pass
+                                
+                                # MÉTODO 3: Usar Select do Selenium (fallback)
+                                try:
+                                    conceito_selecionado = Select(select_conceito).first_selected_option.text.strip()
+                                    if conceito_selecionado and conceito_selecionado != "Selecione":
+                                        conceitos.append(conceito_selecionado)
+                                        print(f"         [{idx_hab+1}] Conceito (Select): {conceito_selecionado}")
+                                except:
+                                    print(f"         [{idx_hab+1}] ⚠️ Nenhum conceito selecionado")
+                                    
+                            except Exception as e:
+                                print(f"         [{idx_hab+1}] ❌ Erro: {str(e)[:50]}")
                                 continue
                         
                         print(f"      ✓ Conceitos coletados: {conceitos}")
@@ -4079,10 +4216,7 @@ class SGNAutomation:
             # 3. Abrir aba de Conceitos
             print("\n3. Navegando para aba Conceitos...")
             try:
-                aba_conceitos = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Conceitos')]")
-                aba_conceitos.click()
-                time.sleep(2)
-                print("   ✓ Aba Conceitos acessada")
+                self._open_conceitos_tab()
             except Exception as e:
                 return False, f"Erro ao acessar aba Conceitos: {e}"
             
@@ -4100,49 +4234,116 @@ class SGNAutomation:
             # 6. Navegar para aba Pedagógico
             print("\n6. Navegando para aba Pedagógico...")
             try:
-                aba_pedagogico = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Pedagógico')]")
-                aba_pedagogico.click()
-                time.sleep(3)
-                print("   ✓ Aba Pedagógico acessada")
+                self._open_pedagogico_tab()
             except Exception as e:
                 return False, f"Erro ao acessar aba Pedagógico: {e}"
             
             # 7. Lançar pareceres para cada aluno
             print("\n7. Lançando pareceres...")
             pareceres_lancados = 0
+            total_alunos = len(alunos_conceitos)
             
-            for nome_aluno, conceito_moda in alunos_conceitos.items():
+            # Aguardar dropdown carregar completamente (com retry)
+            print("   ⏳ Aguardando dropdown de alunos carregar...")
+            alunos_dropdown = {}
+            max_tentativas = 10
+            
+            for tentativa in range(1, max_tentativas + 1):
                 try:
-                    print(f"\n   Lançando parecer para: {nome_aluno} (Conceito: {conceito_moda})")
-                    
-                    # Selecionar aluno no dropdown
-                    select_estudante = WebDriverWait(self.driver, 10).until(
+                    # Aguardar o select estar presente
+                    select_estudante = WebDriverWait(self.driver, 2).until(
                         EC.presence_of_element_located((By.ID, "tabViewDiarioClasse:formAbaPedagogico:selectEstudantes_input"))
                     )
                     
-                    # Encontrar a opção que contém o nome do aluno
-                    select_obj = Select(select_estudante)
-                    aluno_encontrado = False
+                    # Usar JavaScript para pegar as options (mais confiável que Selenium Select)
+                    options_data = self.driver.execute_script("""
+                        var select = document.getElementById('tabViewDiarioClasse:formAbaPedagogico:selectEstudantes_input');
+                        var options = [];
+                        for (var i = 0; i < select.options.length; i++) {
+                            var opt = select.options[i];
+                            if (opt.text && opt.text !== 'Selecione') {
+                                options.push({
+                                    text: opt.text,
+                                    value: opt.value
+                                });
+                            }
+                        }
+                        return options;
+                    """)
                     
-                    for option in select_obj.options:
-                        if nome_aluno in option.text:
-                            select_obj.select_by_visible_text(option.text)
-                            aluno_encontrado = True
-                            time.sleep(2)
-                            print(f"      ✓ Aluno selecionado no dropdown")
-                            break
+                    # Criar mapa de nomes disponíveis
+                    alunos_dropdown = {}
+                    for opt_data in options_data:
+                        alunos_dropdown[opt_data['text']] = opt_data['value']
                     
-                    if not aluno_encontrado:
-                        print(f"      ⚠️ Aluno não encontrado no dropdown: {nome_aluno}")
+                    # Se encontrou alunos, sair do loop
+                    if len(alunos_dropdown) > 0:
+                        print(f"   ✓ Dropdown carregado com {len(alunos_dropdown)} alunos")
+                        break
+                    
+                    # Se não encontrou, aguardar e tentar novamente
+                    print(f"   ⏳ Tentativa {tentativa}/{max_tentativas}: Dropdown vazio, aguardando...")
+                    time.sleep(1)
+                    
+                except Exception as e:
+                    print(f"   ⚠️ Tentativa {tentativa}/{max_tentativas}: Erro - {str(e)[:50]}")
+                    time.sleep(1)
+            
+            # Verificar se conseguiu carregar
+            if len(alunos_dropdown) == 0:
+                print(f"\n   ❌ ERRO: Dropdown não carregou após {max_tentativas} tentativas")
+                print(f"   🔍 DEBUG - HTML do select:")
+                try:
+                    select_html = select_estudante.get_attribute('outerHTML')
+                    print(f"   {select_html[:500]}")
+                except:
+                    print("   Não foi possível obter HTML do select")
+                return False, "Dropdown de alunos não carregou na aba Pedagógico"
+            
+            # DEBUG: Mostrar primeiros 5 alunos de cada lista para comparação
+            print(f"\n   🔍 DEBUG - Primeiros 5 alunos coletados da aba Conceitos:")
+            for i, nome in enumerate(list(alunos_conceitos.keys())[:5], 1):
+                print(f"      {i}. '{nome}'")
+            
+            print(f"\n   🔍 DEBUG - Primeiros 5 alunos do dropdown Pedagógico:")
+            for i, nome in enumerate(list(alunos_dropdown.keys())[:5], 1):
+                print(f"      {i}. '{nome}'")
+            
+            for idx, (nome_aluno, conceito_moda) in enumerate(alunos_conceitos.items(), 1):
+                try:
+                    print(f"\n   [{idx}/{total_alunos}] {nome_aluno} (Conceito: {conceito_moda})")
+                    
+                    # Verificar se o aluno está no dropdown
+                    if nome_aluno not in alunos_dropdown:
+                        print(f"      ⚠️ Aluno não está nesta disciplina")
                         continue
                     
-                    # Aqui você pode adicionar lógica adicional para preencher pareceres
-                    # baseado no conceito_moda, se necessário
+                    # Selecionar aluno usando JavaScript (mais confiável)
+                    valor_option = alunos_dropdown[nome_aluno]
+                    self.driver.execute_script("""
+                        var select = document.getElementById('tabViewDiarioClasse:formAbaPedagogico:selectEstudantes_input');
+                        select.value = arguments[0];
+                        
+                        // Disparar evento change para acionar o AJAX do PrimeFaces
+                        var event = new Event('change', { bubbles: true });
+                        select.dispatchEvent(event);
+                    """, valor_option)
+                    
+                    # Aguardar carregamento AJAX dos dados do aluno
+                    WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((By.ID, "tabViewDiarioClasse:formAbaPedagogico:sanfonaDesempenho"))
+                    )
+                    time.sleep(0.5)
+                    
+                    print(f"      ✓ Selecionado e carregado")
+                    
+                    # TODO: Implementar lógica de preenchimento de pareceres
+                    # baseado no conceito_moda (A, B, C, NE)
                     
                     pareceres_lancados += 1
                     
                 except Exception as e:
-                    print(f"      ❌ Erro ao lançar parecer para {nome_aluno}: {e}")
+                    print(f"      ❌ Erro: {str(e)[:80]}")
                     continue
             
             # Mensagem final
