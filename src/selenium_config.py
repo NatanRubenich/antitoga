@@ -95,10 +95,13 @@ class SeleniumManager:
         # Cria a instância do WebDriver com as configurações
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
         
+        # Maximizar janela (garantir que está maximizada)
+        self.driver.maximize_window()
+        
         # Define timeout implícito de 10 segundos para encontrar elementos
         self.driver.implicitly_wait(10)
         
-        print("✅ Driver do Chrome configurado com sucesso")
+        print("✅ Driver do Chrome configurado com sucesso (maximizado)")
         return self.driver
     
     def close_driver(self):

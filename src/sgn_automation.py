@@ -1618,6 +1618,16 @@ class SGNAutomation:
         try:
             print(f"     🔗 Acessando aba de notas...")
             
+            # IMPORTANTE: Garantir que nenhuma modal está aberta antes de clicar
+            try:
+                modal_aberta = self.driver.find_element(By.ID, "modalDadosAtitudes")
+                if modal_aberta.is_displayed():
+                    print(f"     ⚠️ Modal ainda aberta, forçando fechamento...")
+                    self.driver.execute_script("PF('modalDadosAtitudes').hide();")
+                    time.sleep(1)
+            except:
+                pass
+            
             # Clicar no botão da aba de notas
             aba_notas_button = WebDriverWait(self.driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, aluno_info["xpath_aba_notas"]))
@@ -1627,7 +1637,8 @@ class SGNAutomation:
             self.driver.execute_script("arguments[0].scrollIntoView(true);", aba_notas_button)
             time.sleep(0.5)
             
-            aba_notas_button.click()
+            # Clicar via JavaScript para evitar interceptação
+            self.driver.execute_script("arguments[0].click();", aba_notas_button)
             
             # Aguardar modal/aba carregar
             time.sleep(2)
@@ -1888,9 +1899,41 @@ class SGNAutomation:
                 from selenium.webdriver.common.keys import Keys
                 body = self.driver.find_element(By.TAG_NAME, "body")
                 body.send_keys(Keys.ESCAPE)
-                print(f"     ✅ Modal fechada com ESC (salvamento automático)")
-                time.sleep(1)
-                return True
+                time.sleep(2)
+                
+                # Verificar se apareceu erro de Recomposição de Aprendizagem (conceito C)
+                try:
+                    erro_msg = self.driver.find_element(By.XPATH, "//span[contains(text(), 'Recomposição de Aprendizagem')]")
+                    print(f"     ⚠️ ERRO: Conceito C exige Recomposição de Aprendizagem")
+                    
+                    # Fechar mensagem de erro
+                    try:
+                        fechar_erro = self.driver.find_element(By.XPATH, "//div[contains(@class, 'ui-messages-error')]//a[contains(@class, 'ui-messages-close')]")
+                        fechar_erro.click()
+                        time.sleep(0.5)
+                    except:
+                        pass
+                    
+                    return False
+                except:
+                    # Verificar se modal realmente fechou
+                    try:
+                        WebDriverWait(self.driver, 2).until(
+                            EC.invisibility_of_element_located((By.ID, "modalDadosAtitudes"))
+                        )
+                        print(f"     ✅ Modal fechada com ESC (salvamento automático)")
+                        return True
+                    except:
+                        print(f"     ⚠️ Modal ainda visível, tentando forçar fechamento...")
+                        # Forçar fechamento via JavaScript
+                        try:
+                            self.driver.execute_script("PF('modalDadosAtitudes').hide();")
+                            time.sleep(1)
+                            print(f"     ✅ Modal fechada via JavaScript")
+                            return True
+                        except:
+                            pass
+                    
             except Exception as esc_error:
                 print(f"     ⚠️ ESC não funcionou, tentando botão de fechar...")
             
@@ -2386,24 +2429,53 @@ class SGNAutomation:
         # Mapear recuperações para cabeçalhos
         recuperacao_por_av = {}  # {identificador_cabecalho_av: identificador_cabecalho_rp}
         
+        print(f"   🔍 DEBUG: Total de recuperações coletadas: {len(dados_recuperacoes)}")
+        print(f"   📋 DEBUG: Recuperações = {list(dados_recuperacoes.keys())}")
+        
+        # NOVA ABORDAGEM: Primeiro, adicionar TODAS as colunas RP que aparecem nos cabeçalhos
+        # Isso garante que RPs visíveis na tabela sejam coletadas mesmo sem dados detalhados
+        for ident_cabecalho in cabecalhos["identificadores"]:
+            if ident_cabecalho.startswith("RP"):
+                # Se ainda não foi adicionado, adicionar agora
+                if ident_cabecalho not in colunas:
+                    idx_coluna = cabecalhos["identificadores"].index(ident_cabecalho)
+                    colunas[ident_cabecalho] = idx_coluna
+                    print(f"   ✓ RP detectada no cabeçalho: {ident_cabecalho} (coluna {idx_coluna})")
+                    
+                    # Tentar inferir qual AV esta RP substitui pelo número
+                    # Ex: RP2 substitui AV2
+                    match_numero = re.search(r'RP(\d+)', ident_cabecalho)
+                    if match_numero:
+                        numero_rp = match_numero.group(1)
+                        av_correspondente = f"AV{numero_rp}"
+                        
+                        # Verificar se esta AV existe nas colunas
+                        if av_correspondente in colunas:
+                            recuperacao_por_av[av_correspondente] = ident_cabecalho
+                            print(f"   🔗 Inferido: {ident_cabecalho} substitui {av_correspondente}")
+        
+        # Depois, processar recuperações detalhadas (se houver)
         for rec_id, rec_info in dados_recuperacoes.items():
             data_rec = rec_info.get("data", "")
             titulo_rec = rec_info.get("titulo", "")
             origem = rec_info.get("origem")  # Ex: "AV5"
             
             # Buscar match pelo (data, titulo)
+            print(f"   🔍 Procurando RP detalhada: {rec_id} (data='{data_rec}', titulo='{titulo_rec}', origem='{origem}')")
             ident_cabecalho_rec = None
             for ident_cabecalho, (data_cab, titulo_cab) in tooltip_map.items():
                 if data_rec == data_cab and titulo_rec == titulo_cab:
                     ident_cabecalho_rec = ident_cabecalho
+                    print(f"   ✓ Match encontrado: {ident_cabecalho}")
                     break
             
             if ident_cabecalho_rec:
                 idx_coluna = cabecalhos["identificadores"].index(ident_cabecalho_rec)
+                # Atualizar colunas (pode já estar lá da primeira passagem)
                 colunas[ident_cabecalho_rec] = idx_coluna
                 print(f"   ✓ Match: {rec_id} ({titulo_rec}) → {ident_cabecalho_rec} (coluna {idx_coluna})")
                 
-                # Mapear recuperação para a avaliação de origem
+                # Mapear recuperação para a avaliação de origem (sobrescreve inferência se houver)
                 if origem and origem in av_original_para_cabecalho:
                     ident_cabecalho_origem = av_original_para_cabecalho[origem]
                     recuperacao_por_av[ident_cabecalho_origem] = ident_cabecalho_rec
@@ -2732,7 +2804,9 @@ class SGNAutomation:
                 data_ri = str(aluno_info["linha"] - 1)
 
             print(f"     🔍 Coletando notas da linha data-ri='{data_ri}'...")
-            print(f"     📋 Avaliações/Recuperações a coletar: {list(mapa_colunas.keys())}")
+            av_list = [k for k in mapa_colunas.keys() if k.startswith('AV')]
+            rp_list = [k for k in mapa_colunas.keys() if k.startswith('RP')]
+            print(f"     📋 Coletando: {len(av_list)} AVs {av_list} + {len(rp_list)} RPs {rp_list}")
 
             # Iterar sobre cada avaliação/recuperação mapeada
             for ident, idx in sorted(mapa_colunas.items(), key=lambda x: x[1]):
@@ -2829,32 +2903,32 @@ class SGNAutomation:
                 av_utilizada = None
                 tipo_origem = None
                 
-                # Procurar em qual avaliação esta habilidade está vinculada
-                print(f"       🔍 DEBUG: Procurando '{habilidade_texto}' nas avaliações...")
+                # Procurar em qual avaliação esta habilidade está vinculada (otimizado)
                 for av, habilidades_av in mapeamentos["habilidades"].items():
-                    print(f"          - Verificando {av}: {len(habilidades_av)} habilidades")
                     for h in habilidades_av:
-                        print(f"            • '{h['habilidade']}'")
                         # Remover asterisco (*) do início da habilidade coletada para comparação
                         hab_coletada = h["habilidade"].lstrip("*").strip()
                         hab_modal = habilidade_texto.lstrip("*").strip()
                         if self._texto_corresponde(hab_modal, hab_coletada):
-                            print(f"            ✓ MATCH!")
                             # Encontrou! Esta habilidade pertence a esta avaliação
+                            # REGRA: SEMPRE priorizar RP se existir, senão usar AV
+                            recuperacao = mapeamentos["recuperacao_por_avaliacao"].get(av)
+                            conceito_rec = notas_aluno.get(recuperacao, "") if recuperacao else ""
                             conceito_av = notas_aluno.get(av, "")
-                            if conceito_av:
+                            
+                            # Priorizar RP sobre AV (mesmo que AV tenha nota)
+                            if conceito_rec:
+                                # Tem recuperação com nota: SEMPRE usar RP
+                                conceito = conceito_rec
+                                av_utilizada = recuperacao
+                                tipo_origem = "recuperação"
+                                print(f"       🔄 USANDO RP! Habilidade de {av} → Aplicando nota da {recuperacao}: '{conceito_rec}'")
+                            elif conceito_av:
+                                # Não tem RP ou RP está vazia: usar AV
                                 conceito = conceito_av
                                 av_utilizada = av
                                 tipo_origem = "avaliação"
-
-                            # Verificar se tem recuperação para esta avaliação
-                            recuperacao = mapeamentos["recuperacao_por_avaliacao"].get(av)
-                            if recuperacao:
-                                conceito_rec = notas_aluno.get(recuperacao, "")
-                                if conceito_rec:
-                                    conceito = conceito_rec
-                                    av_utilizada = recuperacao
-                                    tipo_origem = "recuperação"
+                            # Se ambos estão vazios, conceito fica vazio
 
                             break
                     if av_utilizada:
@@ -2864,38 +2938,27 @@ class SGNAutomation:
                 habilidade_curta = habilidade_texto[:50] if len(habilidade_texto) > 50 else habilidade_texto
                 
                 if av_utilizada and conceito:
-                    print(f"       📌 Habilidade: {habilidade_curta}")
-                    print(f"          🔗 Vinculada à: {av_utilizada} ({tipo_origem})")
-                    print(f"          📊 Nota do aluno: '{conceito}'")
+                    print(f"       ✓ {habilidade_curta[:40]}... → {conceito}")
                 elif av_utilizada and not conceito:
-                    print(f"       📌 Habilidade: {habilidade_curta}")
-                    print(f"          🔗 Vinculada à: {av_utilizada}")
-                    print(f"          ⚪ Aluno não tem nota (deixando vazio)")
-                    continue  # Pula, não preenche nada
+                    continue
                 else:
-                    print(f"       📌 Habilidade: {habilidade_curta}")
-                    print(f"          ⚠️ Não encontrada em nenhuma avaliação (deixando vazio)")
+                    continue  # Não mapeada, pula
 
                 # Aplicar o conceito
                 select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
                 try:
                     # Re-localizar a linha inteira para evitar stale element
-                    time.sleep(0.3)  # Pequeno delay para estabilizar o DOM
+                    time.sleep(0.1)  # Pequeno delay para estabilizar o DOM
                     linhas_refresh = self.driver.find_elements(By.XPATH, tabela_xpath)
                     if idx < len(linhas_refresh):
                         linha_refresh = linhas_refresh[idx]
                         select_element = linha_refresh.find_element(By.XPATH, f".//select[contains(@id, 'notaConceito_input')]")
                         valor_atual = select_element.get_attribute("value") or ""
                         if valor_atual != conceito:
-                            self.driver.execute_script("arguments[0].value = arguments[1];", select_element, conceito)
                             self.driver.execute_script(
-                                "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
-                                select_element,
+                                "arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+                                select_element, conceito
                             )
-                            print(f"          ✅ Conceito '{conceito}' aplicado!")
-                            preenchidos += 1
-                        else:
-                            print(f"          ℹ️ Conceito '{conceito}' já era '{valor_atual}'")
                             preenchidos += 1
                 except Exception as select_error:
                     print(f"          ❌ Erro ao aplicar conceito: {select_error}")
