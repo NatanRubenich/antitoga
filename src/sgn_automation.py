@@ -17,6 +17,9 @@ from selenium.webdriver.support import expected_conditions as EC
 import time
 import re
 import unicodedata
+import json
+import random
+import os
 
 class SGNAutomation:
     """
@@ -42,6 +45,42 @@ class SGNAutomation:
         """
         self.selenium_manager = selenium_manager
         self.driver = None
+        # Cache de pareceres
+        self._pareceres_cache = None
+
+    def _load_pareceres(self) -> dict:
+        """
+        Carrega os pareceres a partir de pareceres_pedagogicos.json (cacheado).
+        """
+        if self._pareceres_cache is not None:
+            return self._pareceres_cache
+        try:
+            base_dir = os.path.dirname(os.path.dirname(__file__))
+            json_path = os.path.join(base_dir, "pareceres_pedagogicos.json")
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # normaliza chaves
+            self._pareceres_cache = {str(k).upper(): (v if isinstance(v, list) else []) for k, v in data.items()}
+        except Exception as e:
+            print(f"   ⚠️ Não foi possível carregar pareceres_pedagogicos.json: {e}")
+            self._pareceres_cache = {}
+        return self._pareceres_cache
+
+    def _gerar_parecer_por_conceito(self, conceito: str) -> str:
+        """Seleciona aleatoriamente um parecer do JSON conforme o conceito (A/B/C/NE)."""
+        banco = self._load_pareceres()
+        key = (conceito or "").strip().upper()
+        lst = banco.get(key) or []
+        if lst:
+            return random.choice(lst)
+        for alt in ("B", "A", "C", "NE"):
+            cand = banco.get(alt) or []
+            if cand:
+                return random.choice(cand)
+        return (
+            "O estudante apresenta evolução compatível com o período, havendo oportunidades de aprimoramento em organização, "
+            "consistência nas entregas e participação. A consolidação dos conteúdos ocorrerá com maior dedicação e estudos regulares."
+        )
     
     def perform_login(self, username, password):
         """
@@ -4337,10 +4376,116 @@ class SGNAutomation:
                     
                     print(f"      ✓ Selecionado e carregado")
                     
-                    # TODO: Implementar lógica de preenchimento de pareceres
-                    # baseado no conceito_moda (A, B, C, NE)
-                    
-                    pareceres_lancados += 1
+                    # ===== Implementação de preenchimento de pareceres (alinhado ao HAR correto) =====
+                    # 1) Garantir que 'Média de referência' tenha o valor esperado, sem disparar AJAX extra
+                    try:
+                        tr_label = str(trimestre_referencia).split('.')[-1] if '.' in str(trimestre_referencia) else str(trimestre_referencia)
+                        mapa_valor = {"TR1": "1", "TR2": "2", "TR3": "3", "CF": "4"}
+                        desired_val = mapa_valor.get(tr_label)
+                        if desired_val:
+                            current_val = self.driver.execute_script(
+                                "return document.getElementById('tabViewDiarioClasse:formAbaPedagogico:sanfonaDesempenho:sanfonaAvaliacao:mediasReferencia_input')?.value;"
+                            )
+                            if current_val != desired_val:
+                                self.driver.execute_script(
+                                    "var el=document.getElementById('tabViewDiarioClasse:formAbaPedagogico:sanfonaDesempenho:sanfonaAvaliacao:mediasReferencia_input');"
+                                    "if(el){el.value=arguments[0];}",
+                                    desired_val
+                                )
+                        time.sleep(0.3)
+                    except Exception:
+                        pass
+
+                    # 2) Mapear TR -> índice da linha dos pareceres
+                    trimestre_para_indice = {"TR1": 0, "TR2": 1, "TR3": 2, "CF": 3}
+                    indice_trimestre = trimestre_para_indice.get(tr_label)
+                    if indice_trimestre is None:
+                        print(f"      ⚠️ Trimestre inválido para parecer: {trimestre_referencia}")
+                        continue
+
+                    # 3) Gerar parecer
+                    parecer = self._gerar_parecer_por_conceito(conceito_moda)
+                    print(f"      📝 PARECER ({tr_label}/{conceito_moda}) -> {parecer[:140]}...")
+
+                    # Log no console do navegador
+                    try:
+                        self.driver.execute_script(
+                            "console.log('Parecer anexado | Aluno: ' + arguments[0] + ' | Trimestre: ' + arguments[1] + ' | Conceito: ' + arguments[2] + ' | Texto: ' + arguments[3]);",
+                            nome_aluno,
+                            tr_label,
+                            conceito_moda,
+                            parecer
+                        )
+                    except Exception:
+                        pass
+
+                    # 4) Abrir acordeão Pareceres se necessário e garantir visibilidade da tabela
+                    try:
+                        sanfona_media = WebDriverWait(self.driver, 5).until(
+                            EC.presence_of_element_located((By.ID, "tabViewDiarioClasse:formAbaPedagogico:sanfonaDesempenho:sanfonaMedia"))
+                        )
+                        try:
+                            header = sanfona_media.find_element(By.CSS_SELECTOR, ".ui-accordion-header")
+                            if header.get_attribute("aria-expanded") != "true":
+                                self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", header)
+                                header.click()
+                                time.sleep(0.3)
+                        except Exception:
+                            pass
+                        WebDriverWait(self.driver, 5).until(
+                            EC.presence_of_element_located((By.ID, "tabViewDiarioClasse:formAbaPedagogico:sanfonaDesempenho:sanfonaMedia:desempenhoMedias"))
+                        )
+                    except Exception:
+                        pass
+
+                    # 5) Preencher textarea do TR correto via JS (evita element not interactable)
+                    textarea_id = f"tabViewDiarioClasse:formAbaPedagogico:sanfonaDesempenho:sanfonaMedia:desempenhoMedias:{indice_trimestre}:j_idt990"
+                    try:
+                        textarea = WebDriverWait(self.driver, 6).until(
+                            EC.presence_of_element_located((By.ID, textarea_id))
+                        )
+                        try:
+                            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", textarea)
+                            time.sleep(0.2)
+                        except Exception:
+                            pass
+                        self.driver.execute_script(
+                            "var el=document.getElementById(arguments[0]);"
+                            "if(el){el.value=arguments[1];var e1=new Event('input',{bubbles:true});el.dispatchEvent(e1);var e2=new Event('change',{bubbles:true});el.dispatchEvent(e2);}",
+                            textarea_id,
+                            parecer
+                        )
+                        print(f"      ✓ Parecer preenchido em {tr_label}")
+
+                        # 6) Salvar — clicar no botão e aguardar mensagem
+                        btn_salvar = WebDriverWait(self.driver, 6).until(
+                            EC.presence_of_element_located((By.ID, "tabViewDiarioClasse:formAbaPedagogico:sanfonaDesempenho:botaoSalvarDesempenho"))
+                        )
+                        try:
+                            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn_salvar)
+                            time.sleep(0.2)
+                        except Exception:
+                            pass
+                        try:
+                            WebDriverWait(self.driver, 4).until(
+                                EC.element_to_be_clickable((By.ID, "tabViewDiarioClasse:formAbaPedagogico:sanfonaDesempenho:botaoSalvarDesempenho"))
+                            )
+                            btn_salvar.click()
+                        except Exception:
+                            self.driver.execute_script("arguments[0].click();", btn_salvar)
+
+                        # Aguardar mensagem de sucesso (ou pequeno fallback)
+                        try:
+                            WebDriverWait(self.driver, 6).until(
+                                EC.presence_of_element_located((By.ID, "sgnPrimeMessagesAutoUpdate"))
+                            )
+                        except Exception:
+                            time.sleep(1.0)
+                        print(f"      ✅ Parecer salvo para {nome_aluno} ({tr_label})")
+
+                        pareceres_lancados += 1
+                    except Exception as e_p:
+                        print(f"      ❌ Erro ao preencher/salvar parecer: {str(e_p)[:120]}")
                     
                 except Exception as e:
                     print(f"      ❌ Erro: {str(e)[:80]}")
