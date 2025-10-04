@@ -4000,6 +4000,8 @@ class SGNAutomation:
         Regra: A=4, B=3, C=2, NE=1
         Em caso de empate, escolhe o conceito de menor valor (arredonda para baixo)
         
+        EXCEÇÃO: Se os conceitos forem exatamente A, B e C (empate triplo), retorna B
+        
         Args:
             conceitos (list): Lista de conceitos (ex: ['A', 'B', 'A', 'B'])
             
@@ -4010,7 +4012,7 @@ class SGNAutomation:
             ['A', 'B', 'A', 'B'] -> 'B' (empate, escolhe menor)
             ['A', 'C', 'A', 'C'] -> 'C' (empate, escolhe menor)
             ['A', 'NE', 'A', 'NE'] -> 'NE' (empate, escolhe menor)
-            ['A', 'B', 'C'] -> 'C' (empate triplo, escolhe menor)
+            ['A', 'B', 'C'] -> 'B' (EXCEÇÃO: empate triplo A,B,C retorna B)
             ['B', 'B', 'B', 'A'] -> 'B' (B é mais frequente)
         """
         from collections import Counter
@@ -4023,6 +4025,11 @@ class SGNAutomation:
         
         # Contar frequência de cada conceito
         contador = Counter(conceitos)
+        
+        # EXCEÇÃO: Se for empate triplo A, B, C → retorna B
+        conceitos_unicos = set(conceitos)
+        if conceitos_unicos == {'A', 'B', 'C'} and all(contador[c] == contador['A'] for c in ['A', 'B', 'C']):
+            return 'B'
         
         # Encontrar a frequência máxima
         freq_maxima = max(contador.values())
