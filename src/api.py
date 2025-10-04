@@ -6,11 +6,83 @@ de forma automatizada no sistema SGN.
 """
 from fastapi import FastAPI, Body, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from .models import LoginRequest, LoginRequestRA, ParecerRequest, AutomationResponse, AtitudeObservada, ConceitoHabilidade, TrimestreReferencia
 from .selenium_config import SeleniumManager
 from .sgn_automation import SGNAutomation
 import tempfile
 import os
+import sys
+import io
+import json
+import asyncio
+from queue import Queue
+import threading
+
+# Classe TeeOutput para escrever no terminal E capturar logs
+class TeeOutput:
+    """Escreve tanto no terminal quanto captura para enviar ao frontend"""
+    def __init__(self, *outputs):
+        self.outputs = outputs
+    
+    def write(self, text):
+        for output in self.outputs:
+            output.write(text)
+            output.flush()
+    
+    def flush(self):
+        for output in self.outputs:
+            output.flush()
+
+# Classe para streaming de logs em tempo real
+class LogStreamer:
+    """Captura logs e envia em tempo real via queue"""
+    def __init__(self):
+        self.queue = Queue()
+        self.original_stdout = sys.stdout
+        self.all_logs = []
+        self.buffer = ""
+    
+    def write(self, text):
+        # Escrever no terminal IMEDIATAMENTE
+        self.original_stdout.write(text)
+        self.original_stdout.flush()
+        
+        # Adicionar ao buffer
+        self.buffer += text
+        
+        # Se tem quebra de linha, enviar para queue IMEDIATAMENTE
+        if '\n' in self.buffer:
+            lines = self.buffer.split('\n')
+            # Enviar todas as linhas completas
+            for line in lines[:-1]:
+                if line.strip():
+                    self.queue.put(line)
+                    self.all_logs.append(line)
+            # Manter última linha incompleta no buffer
+            self.buffer = lines[-1]
+        
+        # Se buffer está grande, enviar mesmo sem quebra de linha
+        if len(self.buffer) > 100:
+            if self.buffer.strip():
+                self.queue.put(self.buffer)
+                self.all_logs.append(self.buffer)
+            self.buffer = ""
+    
+    def flush(self):
+        self.original_stdout.flush()
+        # Enviar buffer restante
+        if self.buffer.strip():
+            self.queue.put(self.buffer)
+            self.all_logs.append(self.buffer)
+            self.buffer = ""
+    
+    def get_log(self, timeout=0.01):
+        """Pega próximo log da queue (non-blocking com timeout muito curto)"""
+        try:
+            return self.queue.get(timeout=timeout)
+        except:
+            return None
 
 # Instâncias globais compartilhadas
 selenium_manager = SeleniumManager()
@@ -118,6 +190,11 @@ def create_app():
                 "message": "Lançamento de conceitos concluído com sucesso! Processados: 25/25 alunos"
             }
         """
+        # Capturar logs (com Tee para também exibir no terminal)
+        log_capture = io.StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = TeeOutput(original_stdout, log_capture)
+        
         try:
             # Log da requisição recebida (sem a senha por segurança)
             request_dict = request.dict()
@@ -151,9 +228,15 @@ def create_app():
                 trimestre_referencia=request.trimestre_referencia
             )
             
+            # Capturar logs
+            sys.stdout = original_stdout
+            logs = log_capture.getvalue().split('\n')
+            logs = [log for log in logs if log.strip()]
+            
             return AutomationResponse(
                 success=success,
-                message=message
+                message=message,
+                logs=logs
             )
             
         except Exception as e:
@@ -161,10 +244,20 @@ def create_app():
             error_msg = f"Erro na API: {str(e)}"
             print(f"❌ {error_msg}")
             
+            # Restaurar stdout e capturar logs
+            sys.stdout = original_stdout
+            logs = log_capture.getvalue().split('\n')
+            logs = [log for log in logs if log.strip()]
+            
             return AutomationResponse(
                 success=False,
-                message=error_msg
+                message=error_msg,
+                logs=logs
             )
+        finally:
+            # Garantir que stdout seja sempre restaurado
+            sys.stdout = original_stdout
+            log_capture.close()
     
     @app.post("/lancar-conceito-inteligente", response_model=AutomationResponse)
     async def lancar_conceito_inteligente(
@@ -227,6 +320,11 @@ def create_app():
         Returns:
             AutomationResponse: Resultado da automação com estatísticas
         """
+        # Capturar logs (com Tee para também exibir no terminal)
+        log_capture = io.StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = TeeOutput(original_stdout, log_capture)
+        
         try:
             request_dict = request.dict()
             if 'password' in request_dict:
@@ -259,19 +357,93 @@ def create_app():
                 trimestre_referencia=request.trimestre_referencia
             )
             
+            # Capturar logs
+            sys.stdout = original_stdout
+            logs = log_capture.getvalue().split('\n')
+            logs = [log for log in logs if log.strip()]  # Remover linhas vazias
+            
             return AutomationResponse(
                 success=success,
-                message=message
+                message=message,
+                logs=logs
             )
             
         except Exception as e:
             error_msg = f"Erro na API: {str(e)}"
             print(f"❌ {error_msg}")
             
+            # Restaurar stdout e capturar logs
+            sys.stdout = original_stdout
+            logs = log_capture.getvalue().split('\n')
+            logs = [log for log in logs if log.strip()]
+            
             return AutomationResponse(
                 success=False,
-                message=error_msg
+                message=error_msg,
+                logs=logs
             )
+        finally:
+            # Garantir que stdout seja sempre restaurado
+            sys.stdout = original_stdout
+            log_capture.close()
+    
+    @app.get("/lancar-conceito-inteligente-stream")
+    async def lancar_conceito_inteligente_stream(
+        username: str,
+        password: str,
+        codigo_turma: str,
+        trimestre_referencia: str = "TR2",
+        atitude_observada: str = "Raramente",
+        conceito_habilidade: str = "B"
+    ):
+        """
+        🆕 Endpoint com STREAMING de logs em tempo real via Server-Sent Events (SSE)
+        
+        Este endpoint retorna logs em tempo real conforme são gerados durante a execução.
+        Use este endpoint para ver o progresso da automação em tempo real no frontend.
+        """
+        async def event_generator():
+            log_streamer = LogStreamer()
+            original_stdout = sys.stdout
+            sys.stdout = log_streamer
+            
+            result = {"success": False, "message": ""}
+            
+            def run_automation():
+                nonlocal result
+                try:
+                    success, message = sgn_automation.lancar_conceito_inteligente(
+                        username=username,
+                        password=password,
+                        codigo_turma=codigo_turma,
+                        atitude_observada=atitude_observada,
+                        conceito_habilidade=conceito_habilidade,
+                        trimestre_referencia=trimestre_referencia
+                    )
+                    result = {"success": success, "message": message}
+                except Exception as e:
+                    result = {"success": False, "message": f"Erro: {str(e)}"}
+                finally:
+                    sys.stdout = original_stdout
+            
+            # Executar automação em thread separada
+            thread = threading.Thread(target=run_automation)
+            thread.start()
+            
+            # Enviar logs em tempo real (MUITO RÁPIDO)
+            while thread.is_alive() or not log_streamer.queue.empty():
+                log = log_streamer.get_log(timeout=0.01)
+                if log:
+                    # Enviar IMEDIATAMENTE
+                    yield f"data: {json.dumps({'type': 'log', 'message': log})}\n\n"
+                else:
+                    # Pequeno delay apenas se não tem log
+                    await asyncio.sleep(0.001)
+            
+            # Enviar resultado final
+            yield f"data: {json.dumps({'type': 'done', 'success': result['success'], 'message': result['message']})}\n\n"
+        
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
     
     
     @app.post("/lancar-conceito-inteligente-RA", response_model=AutomationResponse)
@@ -337,6 +509,11 @@ def create_app():
         Returns:
             AutomationResponse: Resultado da automação com estatísticas
         """
+        # Capturar logs (com Tee para também exibir no terminal)
+        log_capture = io.StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = TeeOutput(original_stdout, log_capture)
+        
         try:
             print("\n" + "="*80)
             print(" 🆕 NOVA REQUISIÇÃO - MODO INTELIGENTE COM RA")
@@ -386,9 +563,15 @@ def create_app():
             except Exception as e:
                 print(f"⚠️ Não foi possível remover arquivo temporário: {e}")
             
+            # Capturar logs
+            sys.stdout = original_stdout
+            logs = log_capture.getvalue().split('\n')
+            logs = [log for log in logs if log.strip()]
+            
             return AutomationResponse(
                 success=success,
-                message=message
+                message=message,
+                logs=logs
             )
             
         except Exception as e:
@@ -402,10 +585,20 @@ def create_app():
             except:
                 pass
             
+            # Restaurar stdout e capturar logs
+            sys.stdout = original_stdout
+            logs = log_capture.getvalue().split('\n')
+            logs = [log for log in logs if log.strip()]
+            
             return AutomationResponse(
                 success=False,
-                message=error_msg
+                message=error_msg,
+                logs=logs
             )
+        finally:
+            # Garantir que stdout seja sempre restaurado
+            sys.stdout = original_stdout
+            log_capture.close()
     
     @app.post("/lancar-pareceres-por-nota", response_model=AutomationResponse)
     async def lancar_pareceres_por_nota(request: ParecerRequest = Body(...)):
@@ -436,6 +629,11 @@ def create_app():
         Returns:
             AutomationResponse: Resultado da automação com estatísticas
         """
+        # Capturar logs (com Tee para também exibir no terminal)
+        log_capture = io.StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = TeeOutput(original_stdout, log_capture)
+        
         try:
             request_dict = request.dict()
             if 'password' in request_dict:
@@ -460,19 +658,35 @@ def create_app():
                 trimestre_referencia=request.trimestre_referencia
             )
             
+            # Capturar logs
+            sys.stdout = original_stdout
+            logs = log_capture.getvalue().split('\n')
+            logs = [log for log in logs if log.strip()]
+            
             return AutomationResponse(
                 success=success,
-                message=message
+                message=message,
+                logs=logs
             )
             
         except Exception as e:
             error_msg = f"Erro na API: {str(e)}"
             print(f"❌ {error_msg}")
             
+            # Restaurar stdout e capturar logs
+            sys.stdout = original_stdout
+            logs = log_capture.getvalue().split('\n')
+            logs = [log for log in logs if log.strip()]
+            
             return AutomationResponse(
                 success=False,
-                message=error_msg
+                message=error_msg,
+                logs=logs
             )
+        finally:
+            # Garantir que stdout seja sempre restaurado
+            sys.stdout = original_stdout
+            log_capture.close()
     
     @app.get("/")
     async def root():

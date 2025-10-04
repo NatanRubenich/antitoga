@@ -177,6 +177,8 @@ class AutomationResponse(BaseModel):
     Attributes:
         success (bool): Indica se a operação foi bem-sucedida
         message (str): Mensagem descritiva do resultado
+        logs (list): Lista de logs da execução
     """
     success: bool = Field(..., description="Status da operação (true/false)")
     message: str = Field(..., description="Mensagem descritiva do resultado")
+    logs: list[str] = Field(default=[], description="Logs da execução")

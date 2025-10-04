@@ -117,8 +117,23 @@ function formatDate(dateString) {
     return `${day}/${month}/${year}`;
 }
 
-// Executar Lançar Conceito Inteligente
-async function executeInteligente() {
+// Função helper para exibir logs da API
+function displayApiLogs(logId, logs) {
+    if (logs && logs.length > 0) {
+        logs.forEach(log => {
+            // Detectar tipo de log baseado no conteúdo
+            let type = 'info';
+            if (log.includes('✅') || log.includes('sucesso')) type = 'success';
+            else if (log.includes('❌') || log.includes('Erro')) type = 'error';
+            else if (log.includes('⚠️') || log.includes('Aviso')) type = 'warning';
+            
+            addLog(logId, log, type);
+        });
+    }
+}
+
+// Executar Lançar Conceito Inteligente (COM STREAMING EM TEMPO REAL)
+function executeInteligente() {
     const logId = 'logs-inteligente';
     const btnId = 'btn-inteligente';
     
@@ -138,38 +153,60 @@ async function executeInteligente() {
     clearLogs(logId);
     setButtonState(btnId, true);
     
-    addLog(logId, 'Iniciando lançamento de conceitos inteligentes...', 'info');
+    addLog(logId, '🔗 Conectando ao servidor para streaming...', 'info');
     
-    try {
-        const response = await fetch(`${API_BASE_URL}/lancar-conceito-inteligente`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                username,
-                password,
-                codigo_turma,
-                trimestre_referencia,
-                atitude_observada,
-                conceito_habilidade: 'B'
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            addLog(logId, data.message, 'success');
-            addLog(logId, '✅ Processo concluído com sucesso!', 'success');
-        } else {
-            addLog(logId, `Erro: ${data.message}`, 'error');
+    // Construir URL com query parameters
+    const params = new URLSearchParams({
+        username,
+        password,
+        codigo_turma,
+        trimestre_referencia,
+        atitude_observada,
+        conceito_habilidade: 'B'
+    });
+    
+    const url = `${API_BASE_URL}/lancar-conceito-inteligente-stream?${params}`;
+    
+    // Usar EventSource para SSE (Server-Sent Events)
+    const eventSource = new EventSource(url);
+    
+    eventSource.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'log') {
+                // Log em tempo real!
+                let type = 'info';
+                if (data.message.includes('✅') || data.message.includes('sucesso')) type = 'success';
+                else if (data.message.includes('❌') || data.message.includes('Erro')) type = 'error';
+                else if (data.message.includes('⚠️') || data.message.includes('Aviso')) type = 'warning';
+                
+                addLog(logId, data.message, type);
+            } else if (data.type === 'done') {
+                // Processo finalizado
+                addLog(logId, data.message, data.success ? 'success' : 'error');
+                if (data.success) {
+                    addLog(logId, '✅ Processo concluído com sucesso!', 'success');
+                }
+                eventSource.close();
+                setButtonState(btnId, false);
+            }
+        } catch (e) {
+            console.error('Erro ao parsear JSON:', e);
         }
-    } catch (error) {
-        addLog(logId, `Erro de conexão: ${error.message}`, 'error');
+    };
+    
+    eventSource.onerror = (error) => {
+        console.error('EventSource error:', error);
+        addLog(logId, '❌ Erro de conexão com o servidor', 'error');
         addLog(logId, 'Verifique se a API está rodando em http://localhost:8001', 'warning');
-    } finally {
+        eventSource.close();
         setButtonState(btnId, false);
-    }
+    };
+    
+    eventSource.onopen = () => {
+        addLog(logId, '✅ Conexão estabelecida, aguardando logs...', 'success');
+    };
 }
 
 // Executar Lançar Conceito Simples
@@ -213,6 +250,9 @@ async function executeSimples() {
         });
         
         const data = await response.json();
+        
+        // Exibir logs da execução
+        displayApiLogs(logId, data.logs);
         
         if (data.success) {
             addLog(logId, data.message, 'success');
@@ -286,6 +326,9 @@ async function executeRA() {
         
         const data = await response.json();
         
+        // Exibir logs da execução
+        displayApiLogs(logId, data.logs);
+        
         if (data.success) {
             addLog(logId, data.message, 'success');
             addLog(logId, '✅ Processo concluído com sucesso!', 'success');
@@ -337,6 +380,9 @@ async function executePareceres() {
         });
         
         const data = await response.json();
+        
+        // Exibir logs da execução
+        displayApiLogs(logId, data.logs);
         
         if (data.success) {
             addLog(logId, data.message, 'success');

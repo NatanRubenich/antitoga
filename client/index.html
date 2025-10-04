@@ -370,6 +370,17 @@
             margin-left: 0.5rem;
         }
         
+        /* Estilo para campos de log redimensionáveis */
+        .resize-y {
+            resize: vertical;
+            cursor: ns-resize;
+        }
+        
+        .resize-y::-webkit-resizer {
+            background: linear-gradient(135deg, #13a4ec 0%, #0c7db8 100%);
+            border-radius: 0 0 0.5rem 0;
+        }
+        
         /* Responsividade */
         @media (max-width: 1024px) {
             .sidebar-animate {
@@ -597,7 +608,7 @@
                     
                     <div>
                         <h3 class="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">Logs do Prompt</h3>
-                        <div id="logs-inteligente" class="w-full h-48 p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm">
+                        <div id="logs-inteligente" class="w-full p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm resize-y" style="min-height: 12rem; max-height: 40rem; height: 12rem;">
                             <p class="text-sm text-gray-500 dark:text-gray-400">Logs serão exibidos aqui...</p>
                         </div>
                         <div class="mt-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30 explanation-card">
@@ -671,7 +682,7 @@
                     
                     <div>
                         <h3 class="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">Logs do Prompt</h3>
-                        <div id="logs-simples" class="w-full h-48 p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm">
+                        <div id="logs-simples" class="w-full p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm resize-y" style="min-height: 12rem; max-height: 40rem; height: 12rem;">
                             <p class="text-sm text-gray-500 dark:text-gray-400">Logs serão exibidos aqui...</p>
                         </div>
                         <div class="mt-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30 explanation-card">
@@ -774,7 +785,7 @@
                     
                     <div>
                         <h3 class="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">Logs do Prompt</h3>
-                        <div id="logs-ra" class="w-full h-48 p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm">
+                        <div id="logs-ra" class="w-full p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm resize-y" style="min-height: 12rem; max-height: 40rem; height: 12rem;">
                             <p class="text-sm text-gray-500 dark:text-gray-400">Logs serão exibidos aqui...</p>
                         </div>
                         <div class="mt-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30 explanation-card">
@@ -828,7 +839,7 @@
                     
                     <div>
                         <h3 class="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">Logs do Prompt</h3>
-                        <div id="logs-pareceres" class="w-full h-48 p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm">
+                        <div id="logs-pareceres" class="w-full p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm resize-y" style="min-height: 12rem; max-height: 40rem; height: 12rem;">
                             <p class="text-sm text-gray-500 dark:text-gray-400">Logs serão exibidos aqui...</p>
                         </div>
                         <div class="mt-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30 explanation-card">
