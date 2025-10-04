@@ -5,6 +5,7 @@ Este módulo fornece o endpoint principal para lançamento de conceitos trimestr
 de forma automatizada no sistema SGN.
 """
 from fastapi import FastAPI, Body, File, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
 from .models import LoginRequest, LoginRequestRA, ParecerRequest, AutomationResponse, AtitudeObservada, ConceitoHabilidade, TrimestreReferencia
 from .selenium_config import SeleniumManager
 from .sgn_automation import SGNAutomation
@@ -27,6 +28,15 @@ def create_app():
         description="API para automação de lançamento de notas no sistema SGN",
         docs_url="/docs",
         redoc_url="/redoc"
+    )
+    
+    # Configurar CORS para permitir requisições do frontend
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Em produção, especifique os domínios permitidos
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     
     @app.post("/lancar-conceito-trimestre", response_model=AutomationResponse)

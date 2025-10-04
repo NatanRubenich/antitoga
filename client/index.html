@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot de Automação - SGN</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#13a4ec",
+                        "primary-dark": "#0c7db8",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#101c22",
+                        "surface-light": "rgba(255, 255, 255, 0.4)",
+                        "surface-dark": "rgba(14, 22, 34, 0.6)",
+                        "border-light": "rgba(255, 255, 255, 0.6)",
+                        "border-dark": "rgba(255, 255, 255, 0.1)"
+                    },
+                    fontFamily: {
+                        display: "Space Grotesk"
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.5rem",
+                        lg: "1rem",
+                        xl: "1.5rem",
+                        full: "9999px"
+                    },
+                    boxShadow: {
+                        "inner-light": "inset 0 2px 4px 0 rgba(0, 0, 0, 0.05)",
+                        "inner-dark": "inset 0 2px 4px 0 rgba(0, 0, 0, 0.2)"
+                    }
+                }
+            }
+        };
+    </script>
+    <style>
+        .liquid-glass {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+        }
+        
+        .dark .liquid-glass {
+            background: var(--tw-bg-surface-dark);
+            border: 1px solid var(--tw-br-border-dark);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        
+        /* Estilização dos dropdowns (select) */
+        select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%2313a4ec' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.5rem center;
+            background-size: 1.5em 1.5em;
+            padding-right: 2.5rem;
+        }
+        
+        /* Estilização das opções do dropdown */
+        select option {
+            background-color: white;
+            color: #1f2937;
+            padding: 0.75rem 1rem;
+            font-weight: 500;
+        }
+        
+        select option:hover,
+        select option:focus,
+        select option:checked {
+            background: linear-gradient(135deg, #13a4ec 0%, #0c7db8 100%);
+            color: white;
+        }
+        
+        select option:checked {
+            background: linear-gradient(135deg, #13a4ec 0%, #0c7db8 100%);
+            color: white;
+            font-weight: 600;
+        }
+        
+        /* Estilização adicional para dropdown aberto */
+        select:focus {
+            outline: none;
+            border-color: #13a4ec;
+            box-shadow: 0 0 0 3px rgba(19, 164, 236, 0.1);
+        }
+        
+        /* Estilização específica para Chrome/Edge */
+        @supports (-webkit-appearance: none) {
+            select option {
+                background-color: white;
+                color: #374151;
+                padding: 12px 16px;
+            }
+            
+            select option:hover {
+                background-color: #e0f2fe;
+                color: #0c7db8;
+            }
+        }
+        
+        /* Firefox */
+        @-moz-document url-prefix() {
+            select option:checked {
+                background: #13a4ec !important;
+                color: white !important;
+            }
+        }
+        
+        /* Melhor estilização possível para options nativos */
+        select {
+            color: #1f2937;
+            font-weight: 500;
+        }
+        
+        select option {
+            color: #1f2937;
+            background-color: white;
+            font-weight: 500;
+            min-height: 2.5rem;
+            line-height: 2.5rem;
+        }
+        
+        /* Hover state (limitado em navegadores) */
+        select option:hover {
+            background-color: #dbeafe !important;
+        }
+        
+        /* Selected state */
+        select option:checked,
+        select option[selected] {
+            background: linear-gradient(to right, #13a4ec, #0c7db8) !important;
+            color: white !important;
+            font-weight: 600 !important;
+        }
+        
+        /* Inputs e selects mais brancos */
+        .form-input, .form-select, .form-textarea {
+            background-color: rgba(255, 255, 255, 0.8) !important;
+        }
+        
+        .dark .form-input, .dark .form-select, .dark .form-textarea {
+            background-color: rgba(14, 22, 34, 0.6) !important;
+        }
+        
+        body {
+            background-image:
+                radial-gradient(at 27% 37%, hsla(215, 98%, 69%, 0.1) 0px, transparent 50%),
+                radial-gradient(at 97% 21%, hsla(196, 96%, 79%, 0.1) 0px, transparent 50%),
+                radial-gradient(at 52% 99%, hsla(211, 97%, 74%, 0.1) 0px, transparent 50%),
+                radial-gradient(at 10% 29%, hsla(211, 96%, 68%, 0.1) 0px, transparent 50%),
+                radial-gradient(at 97% 96%, hsla(215, 98%, 69%, 0.1) 0px, transparent 50%),
+                radial-gradient(at 33% 50%, hsla(196, 96%, 79%, 0.1) 0px, transparent 50%),
+                radial-gradient(at 79% 53%, hsla(211, 97%, 74%, 0.1) 0px, transparent 50%);
+        }
+        
+        .required::after {
+            content: "*";
+            color: #ef4444;
+            margin-left: 4px;
+            font-weight: bold;
+        }
+        
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 3px solid white;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Animações de transição entre painéis */
+        .panel-content {
+            animation: fadeInUp 0.5s ease-out;
+        }
+        
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* Animação dos botões de navegação */
+        nav button {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        nav button::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(19, 164, 236, 0.2);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+        
+        nav button:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+        
+        nav button:active {
+            transform: scale(0.95);
+        }
+        
+        /* Animação do botão ativo */
+        nav button.active-nav {
+            animation: slideInRight 0.3s ease-out;
+        }
+        
+        @keyframes slideInRight {
+            from {
+                transform: translateX(-10px);
+                opacity: 0.8;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        /* Animação dos inputs ao focar */
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            animation: inputFocus 0.3s ease-out;
+        }
+        
+        @keyframes inputFocus {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.02);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+        
+        /* Animação do botão Executar */
+        button[id^="btn-"]:not([id*="nav"]) {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        button[id^="btn-"]:not([id*="nav"]):hover {
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% {
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            }
+            50% {
+                box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+            }
+        }
+        
+        /* Animação dos logs */
+        .log-entry {
+            animation: slideInLeft 0.3s ease-out;
+        }
+        
+        @keyframes slideInLeft {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        /* Animação do dropzone */
+        .dropzone {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .dropzone:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(19, 164, 236, 0.2);
+        }
+        
+        /* Animação de entrada da página */
+        .sidebar-animate {
+            animation: slideInFromLeft 0.6s ease-out;
+        }
+        
+        @keyframes slideInFromLeft {
+            from {
+                opacity: 0;
+                transform: translateX(-50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        .main-animate {
+            animation: slideInFromRight 0.6s ease-out;
+        }
+        
+        @keyframes slideInFromRight {
+            from {
+                opacity: 0;
+                transform: translateX(50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        /* Animação de hover nos cards de explicação */
+        .explanation-card {
+            transition: all 0.3s ease;
+        }
+        
+        .explanation-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(19, 164, 236, 0.15);
+        }
+        
+        /* Drag and Drop Styles */
+        .dropzone {
+            border: 2px dashed rgba(19, 164, 236, 0.3);
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .dropzone.dragover {
+            border-color: #13a4ec;
+            background: rgba(19, 164, 236, 0.05);
+        }
+        
+        .construction-badge {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            font-size: 0.75rem;
+            font-weight: bold;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            display: inline-block;
+            margin-left: 0.5rem;
+        }
+        
+        /* Responsividade */
+        @media (max-width: 1024px) {
+            .sidebar-animate {
+                width: 20rem !important;
+            }
+            
+            header h2 {
+                font-size: 1.875rem !important;
+            }
+            
+            button[id^="btn-"]:not([id*="nav"]) {
+                padding: 0.75rem 1.5rem !important;
+                font-size: 1rem !important;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .sidebar-animate {
+                position: fixed;
+                left: -100%;
+                top: 0;
+                height: 100vh;
+                z-index: 50;
+                transition: left 0.3s ease;
+                width: 20rem !important;
+            }
+            
+            .sidebar-animate.mobile-open {
+                left: 0;
+            }
+            
+            .mobile-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 40;
+            }
+            
+            .mobile-overlay.active {
+                display: block;
+            }
+            
+            main {
+                margin-left: 0 !important;
+                width: 100%;
+            }
+            
+            header {
+                flex-direction: column;
+                gap: 1rem;
+            }
+            
+            header h2 {
+                font-size: 1.5rem !important;
+            }
+            
+            button[id^="btn-"]:not([id*="nav"]) {
+                width: 100%;
+                justify-content: center;
+            }
+            
+            .grid-cols-2 {
+                grid-template-columns: 1fr !important;
+            }
+        }
+        
+        @media (max-width: 640px) {
+            body {
+                font-size: 14px;
+            }
+            
+            .p-8 {
+                padding: 1rem !important;
+            }
+            
+            .p-6 {
+                padding: 1rem !important;
+            }
+            
+            header h2 {
+                font-size: 1.25rem !important;
+            }
+            
+            .text-3xl {
+                font-size: 1.5rem !important;
+            }
+            
+            .construction-badge {
+                display: block;
+                margin-left: 0;
+                margin-top: 0.5rem;
+                width: fit-content;
+            }
+        }
+        
+        /* Botão de menu mobile */
+        .mobile-menu-btn {
+            display: none;
+            position: fixed;
+            top: 1rem;
+            left: 1rem;
+            z-index: 60;
+            background: linear-gradient(135deg, #13a4ec 0%, #0c7db8 100%);
+            color: white;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .mobile-menu-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 12px rgba(19, 164, 236, 0.3);
+        }
+        
+        @media (max-width: 768px) {
+            .mobile-menu-btn {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+            }
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-100">
+    <!-- Botão Menu Mobile -->
+    <button class="mobile-menu-btn" onclick="toggleMobileMenu()">
+        <span class="material-symbols-outlined">menu</span>
+        <span class="font-semibold">Menu</span>
+    </button>
+    
+    <!-- Overlay Mobile -->
+    <div class="mobile-overlay" onclick="toggleMobileMenu()"></div>
+    
+    <div class="flex h-screen p-4">
+        <!-- Sidebar -->
+        <div class="flex flex-col rounded-xl liquid-glass p-6 space-y-8 sidebar-animate" style="width: 23rem;">
+            <!-- Logo -->
+            <div class="flex items-center space-x-3">
+                <span class="material-symbols-outlined text-primary-dark dark:text-primary text-3xl">smart_toy</span>
+                <h1 class="text-xl font-bold text-gray-900 dark:text-white">Bot de Automação</h1>
+            </div>
+            
+            <!-- Menu Items -->
+            <nav class="flex flex-col space-y-2">
+                <button onclick="showPanel('inteligente')" id="btn-nav-inteligente" class="flex items-center space-x-3 px-4 py-3 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/30">
+                    <span class="material-symbols-outlined">auto_awesome</span>
+                    <span>Lançar conceito inteligente</span>
+                </button>
+                
+                <button onclick="showPanel('simples')" id="btn-nav-simples" class="flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-primary/20 dark:hover:bg-primary/20 text-gray-700 dark:text-gray-300 font-medium">
+                    <span class="material-symbols-outlined">group</span>
+                    <span>Lançar um conceito para todos</span>
+                </button>
+                
+                <button onclick="showPanel('ra')" id="btn-nav-ra" class="flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-primary/20 dark:hover:bg-primary/20 text-gray-700 dark:text-gray-300 font-medium">
+                    <span class="material-symbols-outlined">badge</span>
+                    <span>Lançar conceito e RA</span>
+                </button>
+                
+                <button onclick="showPanel('pareceres')" id="btn-nav-pareceres" class="flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-primary/20 dark:hover:bg-primary/20 text-gray-700 dark:text-gray-300 font-medium">
+                    <span class="material-symbols-outlined">description</span>
+                    <span>Lançar pareceres</span>
+                </button>
+            </nav>
+        </div>
+        
+        <!-- Main Content -->
+        <main class="flex-1 ml-4 rounded-xl liquid-glass p-8 overflow-y-auto main-animate">
+            <!-- Panel: Lançar Conceito Inteligente -->
+            <div id="panel-inteligente" class="panel-content">
+                <header class="mb-8 flex justify-between items-start">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-900 dark:text-white">Lançar conceito inteligente</h2>
+                        <p class="text-gray-500 dark:text-gray-400 mt-1">Painel para automação de notas e conceitos por trimestre.</p>
+                    </div>
+                    <button onclick="executeInteligente()" id="btn-inteligente" class="flex items-center justify-center space-x-3 px-8 py-4 rounded-lg bg-green-500 hover:bg-green-600 text-white font-bold text-xl transition-all duration-300 shadow-lg hover:shadow-green-500/50 transform hover:-translate-y-0.5">
+                        <span class="material-symbols-outlined text-3xl">play_arrow</span>
+                        <span>Executar</span>
+                    </button>
+                </header>
+                
+                <div class="space-y-8">
+                    <div>
+                        <h3 class="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-200">Parâmetros de Entrada</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Username</label>
+                                <input type="text" id="inteligente-username" placeholder="Digite seu usuário" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Password</label>
+                                <input type="password" id="inteligente-password" placeholder="Digite sua senha" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Código da Turma</label>
+                                <input type="text" id="inteligente-turma" placeholder="Insira o código da turma" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Trimestre de Referência</label>
+                                <select id="inteligente-trimestre" class="form-select w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                                    <option value="TR1">TR1</option>
+                                    <option value="TR2" selected>TR2</option>
+                                    <option value="TR3">TR3</option>
+                                </select>
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Atitude Observada</label>
+                                <select id="inteligente-atitude" class="form-select w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                                    <option value="Sempre">Sempre</option>
+                                    <option value="Às vezes">Às vezes</option>
+                                    <option value="Raramente" selected>Raramente</option>
+                                    <option value="Nunca">Nunca</option>
+                                    <option value="Não conseguiu observar">Não conseguiu observar</option>
+                                    <option value="Não se aplica">Não se aplica</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h3 class="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">Logs do Prompt</h3>
+                        <div id="logs-inteligente" class="w-full h-48 p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm">
+                            <p class="text-sm text-gray-500 dark:text-gray-400">Logs serão exibidos aqui...</p>
+                        </div>
+                        <div class="mt-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30 explanation-card">
+                            <p class="text-sm text-primary-dark dark:text-primary">
+                                <span class="font-bold">Lançar conceito inteligente:</span> Esta funcionalidade analisa automaticamente o desempenho individual de cada aluno com base nas avaliações cadastradas no sistema. O algoritmo identifica as notas de cada habilidade e atribui o conceito correspondente de forma personalizada. Diferente do modo simples, aqui cada aluno recebe conceitos específicos conforme seu desempenho real, garantindo uma avaliação justa e detalhada. Ideal para turmas com avaliações já lançadas no sistema.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Panel: Lançar Conceito Simples -->
+            <div id="panel-simples" class="panel-content hidden">
+                <header class="mb-8 flex justify-between items-start">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-900 dark:text-white">Lançar um conceito para todos</h2>
+                        <p class="text-gray-500 dark:text-gray-400 mt-1">Aplica o mesmo conceito para todos os alunos da turma.</p>
+                    </div>
+                    <button onclick="executeSimples()" id="btn-simples" class="flex items-center justify-center space-x-3 px-8 py-4 rounded-lg bg-green-500 hover:bg-green-600 text-white font-bold text-xl transition-all duration-300 shadow-lg hover:shadow-green-500/50 transform hover:-translate-y-0.5">
+                        <span class="material-symbols-outlined text-3xl">play_arrow</span>
+                        <span>Executar</span>
+                    </button>
+                </header>
+                
+                <div class="space-y-8">
+                    <div>
+                        <h3 class="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-200">Parâmetros de Entrada</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Username</label>
+                                <input type="text" id="simples-username" placeholder="Digite seu usuário" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Password</label>
+                                <input type="password" id="simples-password" placeholder="Digite sua senha" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Código da Turma</label>
+                                <input type="text" id="simples-turma" placeholder="Insira o código da turma" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Trimestre de Referência</label>
+                                <select id="simples-trimestre" class="form-select w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                                    <option value="TR1">TR1</option>
+                                    <option value="TR2" selected>TR2</option>
+                                    <option value="TR3">TR3</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Atitude Observada</label>
+                                <select id="simples-atitude" class="form-select w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                                    <option value="Sempre">Sempre</option>
+                                    <option value="Às vezes">Às vezes</option>
+                                    <option value="Raramente" selected>Raramente</option>
+                                    <option value="Nunca">Nunca</option>
+                                    <option value="Não conseguiu observar">Não conseguiu observar</option>
+                                    <option value="Não se aplica">Não se aplica</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Conceito Habilidade</label>
+                                <select id="simples-conceito" class="form-select w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                                    <option value="A">A</option>
+                                    <option value="B" selected>B</option>
+                                    <option value="C">C</option>
+                                    <option value="NE">NE</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h3 class="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">Logs do Prompt</h3>
+                        <div id="logs-simples" class="w-full h-48 p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm">
+                            <p class="text-sm text-gray-500 dark:text-gray-400">Logs serão exibidos aqui...</p>
+                        </div>
+                        <div class="mt-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30 explanation-card">
+                            <p class="text-sm text-primary-dark dark:text-primary">
+                                <span class="font-bold">Lançar um conceito para todos:</span> Aplica o mesmo conceito (A, B, C ou NE) para todas as habilidades de todos os alunos. Útil para lançamentos rápidos e uniformes.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Panel: Lançar Conceito e RA -->
+            <div id="panel-ra" class="panel-content hidden">
+                <header class="mb-8 flex justify-between items-start">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-900 dark:text-white">Lançar conceito e RA <span class="construction-badge">EM CONSTRUÇÃO</span></h2>
+                        <p class="text-gray-500 dark:text-gray-400 mt-1">Lança conceitos inteligentes e cadastra Recomposição de Aprendizagem.</p>
+                    </div>
+                    <button onclick="executeRA()" id="btn-ra" class="flex items-center justify-center space-x-3 px-8 py-4 rounded-lg bg-green-500 hover:bg-green-600 text-white font-bold text-xl transition-all duration-300 shadow-lg hover:shadow-green-500/50 transform hover:-translate-y-0.5">
+                        <span class="material-symbols-outlined text-3xl">play_arrow</span>
+                        <span>Executar</span>
+                    </button>
+                </header>
+                
+                <div class="space-y-8">
+                    <div>
+                        <h3 class="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-200">Parâmetros de Entrada</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Username</label>
+                                <input type="text" id="ra-username" placeholder="Digite seu usuário" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Password</label>
+                                <input type="password" id="ra-password" placeholder="Digite sua senha" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Código da Turma</label>
+                                <input type="text" id="ra-turma" placeholder="Insira o código da turma" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Trimestre de Referência</label>
+                                <select id="ra-trimestre" class="form-select w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                                    <option value="TR1">TR1</option>
+                                    <option value="TR2" selected>TR2</option>
+                                    <option value="TR3">TR3</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Atitude Observada</label>
+                                <select id="ra-atitude" class="form-select w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                                    <option value="Sempre">Sempre</option>
+                                    <option value="Às vezes">Às vezes</option>
+                                    <option value="Raramente" selected>Raramente</option>
+                                    <option value="Nunca">Nunca</option>
+                                    <option value="Não conseguiu observar">Não conseguiu observar</option>
+                                    <option value="Não se aplica">Não se aplica</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Conceito Habilidade (Fallback)</label>
+                                <select id="ra-conceito" class="form-select w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                                    <option value="A">A</option>
+                                    <option value="B" selected>B</option>
+                                    <option value="C">C</option>
+                                    <option value="NE">NE</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Data Início RA</label>
+                                <input type="date" id="ra-inicio" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Data Término RA</label>
+                                <input type="date" id="ra-termino" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Descrição da RA</label>
+                                <textarea id="ra-descricao" rows="3" placeholder="Descreva a Recomposição de Aprendizagem..." class="form-textarea w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark"></textarea>
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Nome do Arquivo PDF</label>
+                                <input type="text" id="ra-nome-arquivo" placeholder="Ex: RA_Turma_369528_TR2.pdf" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Arquivo PDF da RA</label>
+                                <div id="dropzone-ra" class="dropzone p-8 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark text-center">
+                                    <span class="material-symbols-outlined text-5xl text-primary mb-3 block">cloud_upload</span>
+                                    <p class="text-gray-700 dark:text-gray-300 font-medium mb-1">Arraste e solte o arquivo PDF aqui</p>
+                                    <p class="text-gray-500 dark:text-gray-400 text-sm mb-3">ou clique para selecionar</p>
+                                    <input type="file" id="ra-arquivo" accept=".pdf" class="hidden">
+                                    <button type="button" onclick="document.getElementById('ra-arquivo').click()" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors">
+                                        Selecionar Arquivo
+                                    </button>
+                                    <p id="file-name-ra" class="mt-3 text-sm text-gray-600 dark:text-gray-400"></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h3 class="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">Logs do Prompt</h3>
+                        <div id="logs-ra" class="w-full h-48 p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm">
+                            <p class="text-sm text-gray-500 dark:text-gray-400">Logs serão exibidos aqui...</p>
+                        </div>
+                        <div class="mt-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30 explanation-card">
+                            <p class="text-sm text-primary-dark dark:text-primary">
+                                <span class="font-bold">Lançar conceito e RA:</span> Igual ao inteligente, mas mantém conceito C (não troca por NE) e cadastra Recomposição de Aprendizagem para cada habilidade com conceito C.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Panel: Lançar Pareceres -->
+            <div id="panel-pareceres" class="panel-content hidden">
+                <header class="mb-8 flex justify-between items-start">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-900 dark:text-white">Lançar pareceres</h2>
+                        <p class="text-gray-500 dark:text-gray-400 mt-1">Coleta conceitos e lança pareceres baseados na moda.</p>
+                    </div>
+                    <button onclick="executePareceres()" id="btn-pareceres" class="flex items-center justify-center space-x-3 px-8 py-4 rounded-lg bg-green-500 hover:bg-green-600 text-white font-bold text-xl transition-all duration-300 shadow-lg hover:shadow-green-500/50 transform hover:-translate-y-0.5">
+                        <span class="material-symbols-outlined text-3xl">play_arrow</span>
+                        <span>Executar</span>
+                    </button>
+                </header>
+                
+                <div class="space-y-8">
+                    <div>
+                        <h3 class="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-200">Parâmetros de Entrada</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Username</label>
+                                <input type="text" id="pareceres-username" placeholder="Digite seu usuário" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Password</label>
+                                <input type="password" id="pareceres-password" placeholder="Digite sua senha" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Código da Turma</label>
+                                <input type="text" id="pareceres-turma" placeholder="Insira o código da turma" class="form-input w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder-gray-400 dark:placeholder-gray-500 text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 required">Trimestre de Referência</label>
+                                <select id="pareceres-trimestre" class="form-select w-full p-3 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark focus:border-primary focus:ring-1 focus:ring-primary transition-all text-gray-900 dark:text-white shadow-inner-light dark:shadow-inner-dark">
+                                    <option value="TR1">TR1</option>
+                                    <option value="TR2" selected>TR2</option>
+                                    <option value="TR3">TR3</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h3 class="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">Logs do Prompt</h3>
+                        <div id="logs-pareceres" class="w-full h-48 p-4 rounded-lg bg-surface-light/50 dark:bg-surface-dark/50 border border-border-light dark:border-border-dark overflow-y-auto shadow-inner-light dark:shadow-inner-dark font-mono text-sm">
+                            <p class="text-sm text-gray-500 dark:text-gray-400">Logs serão exibidos aqui...</p>
+                        </div>
+                        <div class="mt-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30 explanation-card">
+                            <p class="text-sm text-primary-dark dark:text-primary">
+                                <span class="font-bold">Lançar pareceres:</span> Coleta os conceitos de cada aluno, calcula a moda (nota mais frequente) e lança pareceres pedagógicos personalizados automaticamente.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
