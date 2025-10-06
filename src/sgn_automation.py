@@ -20,6 +20,8 @@ import unicodedata
 import json
 import random
 import os
+import requests
+from lxml import html
 
 class SGNAutomation:
     """
@@ -447,6 +449,17 @@ class SGNAutomation:
             # PRINTAR RESUMO DAS AVALIAÇÕES COLETADAS
             self._printar_resumo_avaliacoes(dados_av, dados_rp, mapeamentos)
 
+            # 7.1 Validação crítica: bloquear se houver avaliações sem habilidades
+            avs_sem_hab = mapeamentos.get("avaliacoes_sem_habilidade", [])
+            if avs_sem_hab:
+                msg_bloqueio = (
+                    "❌ ERRO: Existem avaliações sem habilidades vinculadas para o trimestre selecionado: "
+                    + ", ".join(avs_sem_hab)
+                    + ". Cadastre habilidades nessas avaliações antes de continuar."
+                )
+                print(msg_bloqueio)
+                return False, msg_bloqueio
+
             # 8. Lançar conceitos INTELIGENTES para todos os alunos
             print("\n8. Iniciando lançamento INTELIGENTE de conceitos...")
             print(f"🔧 Usando valores mapeados:")
@@ -623,6 +636,17 @@ class SGNAutomation:
             
             # PRINTAR RESUMO
             self._printar_resumo_avaliacoes(dados_av, dados_rp, mapeamentos)
+
+            # 7.1 Validação crítica (modo RA): bloquear se houver avaliações sem habilidades
+            avs_sem_hab = mapeamentos.get("avaliacoes_sem_habilidade", [])
+            if avs_sem_hab:
+                msg_bloqueio = (
+                    "❌ ERRO: Existem avaliações sem habilidades vinculadas para o trimestre selecionado: "
+                    + ", ".join(avs_sem_hab)
+                    + ". Cadastre habilidades nessas avaliações antes de continuar."
+                )
+                print(msg_bloqueio)
+                return False, msg_bloqueio
 
             # 8. Lançar conceitos INTELIGENTES COM RA
             print("\n8. Iniciando lançamento INTELIGENTE de conceitos COM RA...")
@@ -2799,8 +2823,9 @@ class SGNAutomation:
         
         # Mapear avaliações para cabeçalhos
         colunas = {}  # {identificador_cabecalho: indice_coluna}
-        habilidades = {}  # {identificador_cabecalho: [habilidades]}
+        habilidades = {}  # {identificador: [habilidades]} (tanto cabeçalho quanto original)
         av_original_para_cabecalho = {}  # {AV4: AV1, AV5: AV2}
+        avaliacoes_sem_habilidade = []  # lista de identificadores (cabeçalho) sem habilidades
         
         for av_info in dados_avaliacoes:
             ident_original = av_info["identificador"]
@@ -2830,11 +2855,16 @@ class SGNAutomation:
                 
                 # SEMPRE coletar habilidades
                 habilidades_coletadas = self._coletar_habilidades_modal(av_info)
+                # Armazenar tanto pelo identificador do cabeçalho (ex.: AV1) quanto pelo original (ex.: AV4)
                 habilidades[ident_cabecalho_match] = habilidades_coletadas
+                habilidades[ident_original] = habilidades_coletadas
                 
                 # AVISO: Se não há habilidades, o conceito padrão será usado
                 if not habilidades_coletadas or len(habilidades_coletadas) == 0:
-                    print(f"   ⚠️ {ident_original} não tem habilidades vinculadas - usará conceito padrão")
+                    print(f"   ❌ {ident_original} não tem habilidades vinculadas")
+                    # Registrar a coluna efetiva (cabeçalho) como sem habilidades
+                    if ident_cabecalho_match not in avaliacoes_sem_habilidade:
+                        avaliacoes_sem_habilidade.append(ident_cabecalho_match)
             else:
                 print(f"   ⚠️ {ident_original} ({data_av} - {titulo_av}) não encontrado nos cabeçalhos (trimestre diferente)")
                 continue
@@ -2900,6 +2930,8 @@ class SGNAutomation:
             "colunas": colunas,
             "habilidades": habilidades,
             "recuperacao_por_avaliacao": recuperacao_por_av,
+            "av_original_para_cabecalho": av_original_para_cabecalho,
+            "avaliacoes_sem_habilidade": avaliacoes_sem_habilidade,
         }
         
         total_habilidades = sum(len(h) for h in habilidades.values())
@@ -2978,6 +3010,22 @@ class SGNAutomation:
             
             print(f"\n       🔍 Abrindo modal da {identificador}...")
             print(f"       📍 Linha: {indice_linha}, data-ri: {data_ri}")
+
+            # TENTAR CAMINHO HTTP (JSF partial/ajax) PRIMEIRO
+            try:
+                modal_html = self._http_fetch_modal_conteudo(str(data_ri))
+                if modal_html:
+                    print("       🌐 Modal carregada via HTTP (partial/ajax)")
+                    habilidades_http = self._parse_habilidades_from_modal_html(modal_html)
+                    if habilidades_http:
+                        for h in habilidades_http[:3]:
+                            habilidade_curta = h['habilidade'][:60] + "..." if len(h['habilidade']) > 60 else h['habilidade']
+                            print(f"         • {habilidade_curta}")
+                        return habilidades_http
+                    else:
+                        print("       ⚠️ Modal HTTP não retornou habilidades, caindo para Selenium")
+            except Exception as e_http:
+                print(f"       ⚠️ Falha caminho HTTP: {str(e_http)[:120]}")
             
             # CLICAR NO LINK DO LÁPIS USANDO O ID DO PRIMEFACES
             # O PrimeFaces gera IDs únicos: tabViewDiarioClasse:formAbaAulasAvaliacoes:panelAvaliacao:avaliacoesDataTable:0:aulasAvaliacao
@@ -3188,6 +3236,120 @@ class SGNAutomation:
 
         return habilidades
 
+    def _build_requests_session(self):
+        """Monta uma requests.Session com os cookies do Selenium."""
+        sess = requests.Session()
+        try:
+            ua = self.driver.execute_script("return navigator.userAgent;")
+        except Exception:
+            ua = "Mozilla/5.0"
+        sess.headers.update({
+            "User-Agent": ua,
+            "Accept": "application/xml, text/xml, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest",
+            "Faces-Request": "partial/ajax",
+            "Origin": "https://sgn.sesisenai.org.br",
+            "Referer": self.driver.current_url,
+        })
+        for c in (self.driver.get_cookies() or []):
+            try:
+                sess.cookies.set(c["name"], c["value"], domain=c.get("domain"), path=c.get("path", "/"))
+            except Exception:
+                continue
+        return sess
+
+    def _extract_view_state(self) -> str:
+        """Extrai o javax.faces.ViewState da página atual aberta no Selenium."""
+        try:
+            # Tentativas comuns de localização
+            candidates = [
+                "//input[@name='javax.faces.ViewState']",
+                "//input[contains(@name,'javax.faces.ViewState')]",
+                "//input[contains(@id,'javax.faces.ViewState')]",
+            ]
+            for xp in candidates:
+                els = self.driver.find_elements(By.XPATH, xp)
+                if els:
+                    val = els[0].get_attribute("value") or ""
+                    if val:
+                        return val
+        except Exception:
+            pass
+        return ""
+
+    def _http_fetch_modal_conteudo(self, data_ri: str) -> str | None:
+        """
+        Executa as duas requisições JSF partial/ajax para abrir e carregar a modal
+        de avaliação e retorna o HTML da modal (conteúdo) como string.
+        """
+        view = self._extract_view_state()
+        if not view:
+            raise RuntimeError("ViewState não encontrado para requisição HTTP")
+
+        sess = self._build_requests_session()
+        # URL base da página do diário (sem query)
+        base_url = self.driver.current_url.split("?", 1)[0]
+
+        # 1) Abrir a modal (clique no lápis)
+        source_id = (
+            f"tabViewDiarioClasse:formAbaAulasAvaliacoes:panelAvaliacao:avaliacoesDataTable:{data_ri}:aulasAvaliacao"
+        )
+        data1 = {
+            "javax.faces.partial.ajax": "true",
+            "javax.faces.source": source_id,
+            "javax.faces.partial.execute": source_id,
+            "javax.faces.partial.render": "modalAvaliacao",
+            source_id: source_id,
+            "javax.faces.ViewState": view,
+        }
+        r1 = sess.post(base_url, data=data1)
+        r1.raise_for_status()
+
+        # 2) Carregar conteúdo da modal
+        data2 = {
+            "javax.faces.partial.ajax": "true",
+            "javax.faces.source": "modalAvaliacao",
+            "javax.faces.partial.execute": "modalAvaliacao",
+            "javax.faces.partial.render": "modalAvaliacao",
+            "modalAvaliacao": "modalAvaliacao",
+            "modalAvaliacao_contentLoad": "true",
+            "javax.faces.ViewState": view,
+        }
+        r2 = sess.post(base_url, data=data2)
+        r2.raise_for_status()
+
+        # A resposta é um XML <partial-response> com <update id="modalAvaliacao"><![CDATA[...]]></update>
+        text = r2.text or ""
+        try:
+            # Extração simples via regex para o CDATA do update de modalAvaliacao
+            m = re.search(r"<update id=\"modalAvaliacao\"><!\[CDATA\[(.*?)\]\]>\</update>", text, re.S)
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
+        return None
+
+    def _parse_habilidades_from_modal_html(self, modal_html: str):
+        """Extrai a lista de habilidades do HTML da modal retornado via HTTP."""
+        try:
+            tree = html.fromstring(modal_html)
+            rows = tree.xpath("//tbody[@id='formModalAvaliacao:tabViewModalAvaliacao:painelTabelaHabilidade:tabelaHabilidade_data']/tr[@data-ri]")
+            habilidades = []
+            for row in rows:
+                tds = row.xpath("./td")
+                if len(tds) >= 3:
+                    competencia = (tds[1].text_content() or "").strip()
+                    habilidade = (tds[2].text_content() or "").strip()
+                    if competencia and habilidade:
+                        habilidades.append({
+                            "competencia": competencia,
+                            "habilidade": habilidade,
+                        })
+            return habilidades
+        except Exception as e:
+            print(f"       ⚠️ Falha ao parsear habilidades via HTTP: {e}")
+            return []
+
     def _coletar_notas_aluno(self, aluno_info, mapa_colunas):
         """
         Lê os valores das AV/RP para o aluno na tabela principal de conceitos
@@ -3233,8 +3395,48 @@ class SGNAutomation:
                     
                     # Verificar se está disabled
                     if select.get_attribute("disabled"):
+                        print(f"        🔒 {ident}: select desabilitado - tentando ler label/texto visível")
+                        # FALLBACK 1: label irmão do select (padrão PrimeFaces *_label)
+                        try:
+                            label_xpath = select_xpath.replace("_input' ]", "_label' ]") if "_input' ]" in select_xpath else None
+                            label_elem = None
+                            if label_xpath:
+                                label_elem = self.driver.find_element(By.XPATH, label_xpath)
+                            else:
+                                # Tentar procurar por um label dentro da mesma célula
+                                td_xpath = f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{data_ri}']/td[{indice_coluna + 1}]"
+                                td_elem = self.driver.find_element(By.XPATH, td_xpath)
+                                try:
+                                    label_elem = td_elem.find_element(By.CSS_SELECTOR, "label, span.ui-selectonemenu-label")
+                                except:
+                                    label_elem = None
+                            valor_label = (label_elem.text or "").strip() if label_elem else ""
+                            if valor_label:
+                                notas[ident] = valor_label
+                                print(f"        ✅ {ident}: '{valor_label}' (via label)")
+                                continue
+                        except Exception as e_lab:
+                            pass
+
+                        # FALLBACK 2: texto visível na célula (pode conter A/B/C/NE)
+                        try:
+                            td_xpath = f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{data_ri}']/td[{indice_coluna + 1}]"
+                            td_elem = self.driver.find_element(By.XPATH, td_xpath)
+                            texto_td = self.driver.execute_script("return arguments[0].textContent;", td_elem) or ""
+                            texto_td = texto_td.strip()
+                            # Extrair um possível conceito (A, B, C, NE)
+                            import re as _re
+                            m = _re.search(r"\b(NE|A|B|C)\b", texto_td)
+                            if m:
+                                notas[ident] = m.group(1)
+                                print(f"        ✅ {ident}: '{notas[ident]}' (via texto da célula)")
+                                continue
+                        except Exception as e_td:
+                            pass
+
+                        # Se nada encontrado, manter vazio
                         notas[ident] = ""
-                        print(f"        🔒 {ident}: desabilitado (evadido/transferido)")
+                        print(f"        ⚪ {ident}: (sem valor visível)")
                         continue
                     
                     # Buscar <option selected="selected">
@@ -3247,12 +3449,37 @@ class SGNAutomation:
                             notas[ident] = valor.strip()
                             print(f"        ✅ {ident}: '{valor}'")
                         else:
+                            # FALLBACK: tentar label/texto quando option não traz valor útil
+                            td_xpath = f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{data_ri}']/td[{indice_coluna + 1}]"
+                            td_elem = self.driver.find_element(By.XPATH, td_xpath)
+                            texto_td = self.driver.execute_script("return arguments[0].textContent;", td_elem) or ""
+                            texto_td = texto_td.strip()
+                            import re as _re
+                            m = _re.search(r"\b(NE|A|B|C)\b", texto_td)
+                            if m:
+                                notas[ident] = m.group(1)
+                                print(f"        ✅ {ident}: '{notas[ident]}' (fallback texto célula)")
+                            else:
+                                notas[ident] = ""
+                                print(f"        ⚪ {ident}: (vazio)")
+                    except Exception as _e_opt:
+                        # Se não tem option selected, tentar ler label/texto
+                        try:
+                            td_xpath = f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{data_ri}']/td[{indice_coluna + 1}]"
+                            td_elem = self.driver.find_element(By.XPATH, td_xpath)
+                            texto_td = self.driver.execute_script("return arguments[0].textContent;", td_elem) or ""
+                            texto_td = texto_td.strip()
+                            import re as _re
+                            m = _re.search(r"\b(NE|A|B|C)\b", texto_td)
+                            if m:
+                                notas[ident] = m.group(1)
+                                print(f"        ✅ {ident}: '{notas[ident]}' (sem option, via texto)")
+                            else:
+                                notas[ident] = ""
+                                print(f"        ⚪ {ident}: (vazio - sem option selected)")
+                        except Exception as _e_txt:
                             notas[ident] = ""
-                            print(f"        ⚪ {ident}: (vazio)")
-                    except:
-                        # Se não tem option selected, está vazio
-                        notas[ident] = ""
-                        print(f"        ⚪ {ident}: (vazio - sem option selected)")
+                            print(f"        ⚪ {ident}: (vazio - sem option selected)")
                         
                 except Exception as e:
                     notas[ident] = ""
@@ -3283,11 +3510,31 @@ class SGNAutomation:
             print(f"     📝 Preenchendo conceitos de habilidades baseado nas notas...")
             
             # ETAPA 1: Coletar informações de todas as habilidades
-            tabela_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']/tr[@data-ri]"
-            linhas = WebDriverWait(self.driver, 5).until(
-                EC.presence_of_all_elements_located((By.XPATH, tabela_xpath))
-            )
-            
+            # Alguns layouts variam o id da tabela; tentar múltiplos seletores
+            xpaths_tabela = [
+                "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']/tr[@data-ri]",
+                "//tbody[contains(@id,'dataTableHabilidades_data')]/tr[@data-ri]",
+                "//tbody[contains(@id,'tabelaHabilidade_data')]/tr[@data-ri]",
+            ]
+            linhas = []
+            last_err = None
+            for xp in xpaths_tabela:
+                try:
+                    linhas = WebDriverWait(self.driver, 12).until(
+                        EC.presence_of_all_elements_located((By.XPATH, xp))
+                    )
+                    if linhas:
+                        tabela_xpath = xp
+                        break
+                except Exception as _e:
+                    last_err = _e
+                    continue
+
+            if not linhas:
+                print("     📋 Total de habilidades encontradas: 0 (tabela não localizada)")
+                # Não trata como erro crítico; apenas não há o que aplicar
+                return True
+
             print(f"     📋 Total de habilidades encontradas: {len(linhas)}")
             
             # Lista de habilidades a preencher: [(data_ri, habilidade_texto, conceito)]
@@ -3337,6 +3584,11 @@ class SGNAutomation:
 
                 # Se encontrou conceito, adicionar à lista
                 if av_utilizada and conceito:
+                    # No fluxo NORMAL (sem RA), conceito 'C' exige RA no SGN.
+                    # Para evitar bloqueio, mapear 'C' -> 'NE' aqui.
+                    if (conceito or "").strip().upper() == 'C':
+                        print("         ℹ️ Conceito 'C' exige RA no fluxo normal → usando 'NE'")
+                        conceito = 'NE'
                     habilidade_curta = habilidade_texto[:50] if len(habilidade_texto) > 50 else habilidade_texto
                     print(f"       ✓ {habilidade_curta[:40]}... → {conceito}")
                     habilidades_para_preencher.append((data_ri, habilidade_texto, conceito))
