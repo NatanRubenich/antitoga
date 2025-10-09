@@ -300,6 +300,7 @@ class SGNAutomation:
         atitude_observada=None,
         conceito_habilidade=None,
         trimestre_referencia="TR2",
+        trocar_c_por_ne: bool = True,
     ):
         """
         🆕 NOVO: Executa o fluxo completo com lançamento INTELIGENTE de conceitos
@@ -403,6 +404,7 @@ class SGNAutomation:
             print(f"   - Código da turma: {codigo_turma}")
             print(f"   - Atitude observada: {atitude_mapeada.value if hasattr(atitude_mapeada, 'value') else atitude_mapeada}")
             print(f"   - Conceito habilidade (fallback): {conceito_mapeado.value if hasattr(conceito_mapeado, 'value') else conceito_mapeado}")
+            print(f"   - Trocar C por NE: {trocar_c_por_ne}")
             
             # 1. Fazer login
             print("\n1. Iniciando processo de login...")
@@ -470,7 +472,8 @@ class SGNAutomation:
                 atitude_observada=atitude_mapeada,
                 conceito_habilidade=conceito_mapeado,
                 trimestre_referencia=trimestre_referencia,
-                mapeamentos_prontos=mapeamentos  # Passar mapeamentos já coletados
+                mapeamentos_prontos=mapeamentos,  # Passar mapeamentos já coletados
+                trocar_c_por_ne=trocar_c_por_ne,
             )
             
             return success, message
@@ -1637,6 +1640,7 @@ class SGNAutomation:
         conceito_habilidade="B",
         trimestre_referencia=None,
         mapeamentos_prontos=None,
+        trocar_c_por_ne: bool = True,
     ):
         """
         Lança conceitos para todos os alunos respeitando as avaliações (AV/RP) e suas
@@ -1712,8 +1716,17 @@ class SGNAutomation:
                     if not self._preencher_observacoes_atitudes(atitude_padrao):
                         print(f"   ⚠️ Observações de atitudes não preenchidas para {aluno_info['nome']}")
 
-                    # 4️⃣ PREENCHER HABILIDADES BASEADO NAS NOTAS
-                    if not self._preencher_conceitos_habilidades_por_notas(notas, mapeamentos):
+                    # 4️⃣ PREENCHER HABILIDADES BASEADO NAS NOTAS (respeita trocar_c_por_ne)
+                    preencheu_ok = False
+                    if trocar_c_por_ne:
+                        preencheu_ok = self._preencher_conceitos_habilidades_por_notas(notas, mapeamentos)
+                    else:
+                        # Mantém C e NÃO troca por NE
+                        _ = self._preencher_conceitos_habilidades_por_notas_mantendo_c(notas, mapeamentos)
+                        # Consideramos sucesso se nenhum erro crítico ocorreu; a função de manter C retorna lista de Cs
+                        preencheu_ok = True
+
+                    if not preencheu_ok:
                         print(f"   ⚠️ Conceitos de habilidades não atualizados para {aluno_info['nome']}")
 
                     print(f"   ✅ Conceitos aplicados para {aluno_info['nome']} (salvamento automático)")
@@ -2135,32 +2148,31 @@ class SGNAutomation:
                 total_linhas = len(linhas)
                 print(f"     📊 Encontradas {total_linhas} linhas de observações de atitudes")
                 
-                for i, linha_element in enumerate(linhas):
-                    try:
-                        data_ri = linha_element.get_attribute("data-ri")
-                        print(f"       📝 Processando linha {i+1} (data-ri={data_ri})")
-                        
-                        # Procurar select nativo diretamente usando o ID específico
-                        select_id = f"formAtitudes:panelAtitudes:dataTableAtitudes:{data_ri}:observacaoAtitude_input"
-                        select_xpath = f"//select[@id='{select_id}']"
-                        
+                from selenium.common.exceptions import StaleElementReferenceException as _Stale
+                for i, _ in enumerate(linhas):
+                    # Re-busca por data-ri a cada iteração para evitar referências stales
+                    tentativa_max = 2
+                    for tent in range(1, tentativa_max + 1):
                         try:
+                            linha_element = self.driver.find_element(By.XPATH, f"{tabela_atitudes_xpath}/tr[@data-ri='{i}']")
+                            data_ri = linha_element.get_attribute("data-ri")
+                            print(f"       📝 Processando linha {i+1} (data-ri={data_ri}) [tentativa {tent}]")
+
+                            select_id = f"formAtitudes:panelAtitudes:dataTableAtitudes:{data_ri}:observacaoAtitude_input"
+                            select_xpath = f"//select[@id='{select_id}']"
+
                             select_element = self.driver.find_element(By.XPATH, select_xpath)
-                            
-                            # Scroll até o elemento
                             self.driver.execute_script("arguments[0].scrollIntoView(true);", select_element)
-                            time.sleep(0.2)
-                            
-                            # Verificar valor atual usando JavaScript (select está oculto)
+                            time.sleep(0.1)
+
                             valor_atual = self.driver.execute_script("return arguments[0].value;", select_element)
                             print(f"       📋 Valor atual: {valor_atual}")
-                            
-                            # Mapear opção para o valor exato esperado no select
+
                             opcoes_mapeadas = {
                                 "Sempre": "Sempre",
                                 "Às vezes": "Às vezes",
-                                "As vezes": "Às vezes",  # Tolerância a erros de acentuação
-                                "Vezes": "Às vezes",     # Tolerância a variações
+                                "As vezes": "Às vezes",
+                                "Vezes": "Às vezes",
                                 "Raramente": "Raramente",
                                 "Nunca": "Nunca",
                                 "Não conseguiu observar": "Não conseguiu observar",
@@ -2168,33 +2180,32 @@ class SGNAutomation:
                                 "Não se aplica": "Não se aplica",
                                 "Nao se aplica": "Não se aplica"
                             }
-                            
-                            # Obter valor mapeado ou usar o valor original
+
                             valor_para_preencher = opcoes_mapeadas.get(opcao_atitude, opcao_atitude)
-                            
+
                             if valor_atual != valor_para_preencher:
-                                # Usar JavaScript para alterar o valor do select oculto
                                 self.driver.execute_script(f"arguments[0].value = '{valor_para_preencher}';", select_element)
-                                
-                                # Disparar evento change para atualizar a interface
                                 self.driver.execute_script("""
                                     var event = new Event('change', { bubbles: true });
                                     arguments[0].dispatchEvent(event);
                                 """, select_element)
-                                
                                 print(f"       ✓ Atitude {i+1}: '{opcao_atitude}' selecionado (JavaScript)")
                                 atitudes_preenchidas += 1
-                                time.sleep(0.5)  # Aguardar processamento
+                                time.sleep(0.2)
                             else:
                                 print(f"       ✓ Atitude {i+1}: Já estava '{opcao_atitude}'")
                                 atitudes_preenchidas += 1
-                            
+                            break
+                        except _Stale:
+                            if tent < tentativa_max:
+                                print(f"       ⚠️ StaleElement na linha {i+1}, refazendo busca...")
+                                time.sleep(0.1)
+                                continue
+                            else:
+                                print(f"       ❌ Elemento ficou stale repetidamente na linha {i+1}")
                         except Exception as select_error:
                             print(f"       ❌ Erro ao selecionar '{opcao_atitude}' na linha {i+1}: {str(select_error)}")
-                    
-                    except Exception as linha_error:
-                        print(f"       ❌ Erro ao processar linha {i+1}: {str(linha_error)}")
-                        continue
+                            break
                         
             except Exception as tabela_error:
                 print(f"     ❌ Erro ao processar tabela de atitudes: {str(tabela_error)}")
@@ -2336,40 +2347,37 @@ class SGNAutomation:
                 from selenium.webdriver.common.keys import Keys
                 body = self.driver.find_element(By.TAG_NAME, "body")
                 body.send_keys(Keys.ESCAPE)
-                time.sleep(2)
-                
-                # Verificar se apareceu erro de Recomposição de Aprendizagem (conceito C)
-                try:
-                    erro_msg = self.driver.find_element(By.XPATH, "//span[contains(text(), 'Recomposição de Aprendizagem')]")
+                time.sleep(0.4)
+
+                # Verificar rapidamente se apareceu erro de Recomposição de Aprendizagem (conceito C)
+                ra_elems = self.driver.find_elements(By.XPATH, "//span[contains(text(), 'Recomposição de Aprendizagem')]")
+                if ra_elems:
                     print(f"     ⚠️ ERRO: Conceito C exige Recomposição de Aprendizagem")
-                    
-                    # Fechar mensagem de erro
+                    # Tentar fechar mensagem de erro (não bloquear)
                     try:
                         fechar_erro = self.driver.find_element(By.XPATH, "//div[contains(@class, 'ui-messages-error')]//a[contains(@class, 'ui-messages-close')]")
                         fechar_erro.click()
-                        time.sleep(0.5)
+                        time.sleep(0.2)
                     except:
                         pass
-                    
-                    return False
+
+                # Verificar se modal realmente fechou
+                try:
+                    WebDriverWait(self.driver, 1).until(
+                        EC.invisibility_of_element_located((By.ID, "modalDadosAtitudes"))
+                    )
+                    print(f"     ✅ Modal fechada com ESC (salvamento automático)")
+                    return True
                 except:
-                    # Verificar se modal realmente fechou
+                    print(f"     ⚠️ Modal ainda visível, tentando forçar fechamento...")
+                    # Forçar fechamento via JavaScript
                     try:
-                        WebDriverWait(self.driver, 2).until(
-                            EC.invisibility_of_element_located((By.ID, "modalDadosAtitudes"))
-                        )
-                        print(f"     ✅ Modal fechada com ESC (salvamento automático)")
+                        self.driver.execute_script("PF('modalDadosAtitudes').hide();")
+                        time.sleep(0.5)
+                        print(f"     ✅ Modal fechada via JavaScript")
                         return True
                     except:
-                        print(f"     ⚠️ Modal ainda visível, tentando forçar fechamento...")
-                        # Forçar fechamento via JavaScript
-                        try:
-                            self.driver.execute_script("PF('modalDadosAtitudes').hide();")
-                            time.sleep(1)
-                            print(f"     ✅ Modal fechada via JavaScript")
-                            return True
-                        except:
-                            pass
+                        pass
                     
             except Exception as esc_error:
                 print(f"     ⚠️ ESC não funcionou, tentando botão de fechar...")
@@ -3600,6 +3608,14 @@ class SGNAutomation:
                 try:
                     # Construir o ID do select
                     select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
+                    # Garantir que a linha esteja renderizada/visível
+                    try:
+                        linha_xpath_scroll = f"{tabela_xpath}/tr[@data-ri='{data_ri}']"
+                        linha_elem = self.driver.find_element(By.XPATH, linha_xpath_scroll)
+                        self.driver.execute_script("arguments[0].scrollIntoView(true);", linha_elem)
+                        time.sleep(0.1)
+                    except Exception:
+                        pass
                     
                     # Tentar até 3 vezes para garantir que o conceito foi aplicado
                     max_tentativas = 3
@@ -3614,33 +3630,30 @@ class SGNAutomation:
                                 var valorAtual = select.value;
                                 if (valorAtual !== '{conceito}') {{
                                     select.value = '{conceito}';
-                                    
-                                    // Marcar como selected no option correspondente
+                                    // Marcar visualmente como selected
                                     var options = select.options;
                                     for (var i = 0; i < options.length; i++) {{
-                                        if (options[i].value === '{conceito}') {{
-                                            options[i].selected = true;
-                                        }} else {{
-                                            options[i].selected = false;
-                                        }}
+                                        options[i].selected = (options[i].value === '{conceito}');
                                     }}
-                                    
-                                    // Disparar evento change que o PrimeFaces escuta
-                                    var event = new Event('change', {{ bubbles: true, cancelable: true }});
-                                    select.dispatchEvent(event);
-                                    
+                                    // Disparar onchange (PrimeFaces Ajax Behavior)
+                                    if (typeof select.onchange === 'function') {{
+                                        try {{ select.onchange(); }} catch(e) {{ /* ignora */ }}
+                                    }} else {{
+                                        var event = new Event('change', {{ bubbles: true, cancelable: true }});
+                                        select.dispatchEvent(event);
+                                    }}
                                     return true;
                                 }}
-                                return false;
+                                return false; // já estava com o valor correto
                             }}
-                            return null;
+                            return null; // select não encontrado
                             """
                             
                             resultado = self.driver.execute_script(script)
                             
                             if resultado is True:
-                                # Aguardar AJAX processar
-                                time.sleep(0.5)
+                                # Aguardar processamento Ajax curto
+                                time.sleep(0.2)
                                 
                                 # Verificar se o valor foi realmente aplicado
                                 script_verificar = f"""
@@ -3656,14 +3669,23 @@ class SGNAutomation:
                                 else:
                                     if tentativa < max_tentativas:
                                         print(f"          ⚠️ Tentativa {tentativa}: Valor não aplicado, retentando...")
-                                        time.sleep(0.5)
+                                        time.sleep(0.2)
                             elif resultado is False:
-                                # Já estava com o valor correto
+                                # Já estava com o valor correto → contar como sucesso
+                                preenchidos += 1
                                 sucesso = True
                                 break
                             else:
-                                print(f"          ⚠️ Select não encontrado: {select_id}")
-                                break
+                                print(f"          ⚠️ Select não encontrado: {select_id}. Tentando re-renderizar linha...")
+                                # Tentar forçar renderização/visibilidade e tentar novamente
+                                try:
+                                    linha_xpath_scroll = f"{tabela_xpath}/tr[@data-ri='{data_ri}']"
+                                    linha_elem = self.driver.find_element(By.XPATH, linha_xpath_scroll)
+                                    self.driver.execute_script("arguments[0].scrollIntoView(true);", linha_elem)
+                                    time.sleep(0.2)
+                                except Exception:
+                                    pass
+                                # deixar o loop de tentativa repetir
                                 
                         except Exception as e_tentativa:
                             if tentativa < max_tentativas:

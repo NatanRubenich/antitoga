@@ -84,6 +84,11 @@ class LoginRequest(BaseModel):
         example="TR2",
         json_schema_extra={"widget": "select"}
     )
+    trocar_c_por_ne: bool = Field(
+        default=True,
+        description="Se verdadeiro, troca conceito 'C' por 'NE' no fluxo inteligente (evita exigir RA)",
+        example=True
+    )
 
     class Config:
         json_schema_extra = {

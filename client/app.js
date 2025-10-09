@@ -156,13 +156,17 @@ function executeInteligente() {
     addLog(logId, '🔗 Conectando ao servidor para streaming...', 'info');
     
     // Construir URL com query parameters
+    const trocarCheckbox = document.getElementById('inteligente-trocar-c-ne');
+    const trocar_c_por_ne = trocarCheckbox ? !!trocarCheckbox.checked : false; // fallback seguro = false
+    addLog(logId, `Flag 'Trocar C→NE' enviada: ${trocar_c_por_ne}`, 'info');
     const params = new URLSearchParams({
         username,
         password,
         codigo_turma,
         trimestre_referencia,
         atitude_observada,
-        conceito_habilidade: 'B'
+        conceito_habilidade: 'B',
+        trocar_c_por_ne
     });
     
     const url = `${API_BASE_URL}/lancar-conceito-inteligente-stream?${params}`;

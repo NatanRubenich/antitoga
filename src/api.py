@@ -216,6 +216,10 @@ def create_app():
             print(f"   - Atitude observada: {atitude_val or 'Padrão (Raramente)'}")
             print(f"   - Conceito habilidade: {conceito_val or 'Padrão (B)'}")
             print(f"   - Trimestre referência: {request.trimestre_referencia}")
+            try:
+                print(f"   - Trocar C por NE (request): {getattr(request, 'trocar_c_por_ne', None)}")
+            except Exception:
+                pass
             print("-"*80 + "\n")
 
             # Executar lançamento de conceitos com opções configuráveis
@@ -354,7 +358,8 @@ def create_app():
                 codigo_turma=request.codigo_turma,
                 atitude_observada=atitude_val,
                 conceito_habilidade=conceito_val,
-                trimestre_referencia=request.trimestre_referencia
+                trimestre_referencia=request.trimestre_referencia,
+                trocar_c_por_ne=request.trocar_c_por_ne if hasattr(request, 'trocar_c_por_ne') else True,
             )
             
             # Capturar logs
@@ -394,7 +399,8 @@ def create_app():
         codigo_turma: str,
         trimestre_referencia: str = "TR2",
         atitude_observada: str = "Raramente",
-        conceito_habilidade: str = "B"
+        conceito_habilidade: str = "B",
+        trocar_c_por_ne: str = "true",
     ):
         """
         🆕 Endpoint com STREAMING de logs em tempo real via Server-Sent Events (SSE)
@@ -412,13 +418,24 @@ def create_app():
             def run_automation():
                 nonlocal result
                 try:
+                    # Normalizar flag vinda da query (robusto a diferentes formatos)
+                    flag_str = str(trocar_c_por_ne).strip().lower()
+                    trocar_flag = flag_str in ("true", "1", "yes", "on")
+                    print("\nParametros recebidos (STREAM):")
+                    print(f" - usuario: {username}")
+                    print(f" - codigo_turma: {codigo_turma}")
+                    print(f" - trimestre: {trimestre_referencia}")
+                    print(f" - atitude: {atitude_observada}")
+                    print(f" - conceito_fallback: {conceito_habilidade}")
+                    print(f" - trocar_c_por_ne: {trocar_flag} (raw='{flag_str}')")
                     success, message = sgn_automation.lancar_conceito_inteligente(
                         username=username,
                         password=password,
                         codigo_turma=codigo_turma,
                         atitude_observada=atitude_observada,
                         conceito_habilidade=conceito_habilidade,
-                        trimestre_referencia=trimestre_referencia
+                        trimestre_referencia=trimestre_referencia,
+                        trocar_c_por_ne=trocar_flag,
                     )
                     result = {"success": success, "message": message}
                 except Exception as e:
@@ -747,7 +764,7 @@ def create_app():
             {
                 "status": "healthy",
                 "service": "SGN Automation API"
-            }
+            }   
         """
         return {
             "status": "healthy",

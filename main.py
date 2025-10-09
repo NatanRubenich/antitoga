@@ -10,7 +10,7 @@ Uso:
     
     Ou via uvicorn diretamente:
     uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-"""
+""" 
 from src.api import create_app
 
 # Criar aplicação FastAPI usando a função factory
