@@ -37,6 +37,69 @@ function showPanel(panelName) {
     }, 250);
 }
 
+// Executar Lançar Pareceres (STREAMING EM TEMPO REAL - NOVO, não altera o existente)
+function executePareceresStream() {
+    const logId = 'logs-pareceres';
+    const btnId = 'btn-pareceres';
+
+    const username = document.getElementById('pareceres-username').value;
+    const password = document.getElementById('pareceres-password').value;
+    const codigo_turma = document.getElementById('pareceres-turma').value;
+    const trimestre_referencia = document.getElementById('pareceres-trimestre').value;
+
+    if (!username || !password || !codigo_turma) {
+        addLog(logId, 'Por favor, preencha todos os campos obrigatórios!', 'error');
+        return;
+    }
+
+    clearLogs(logId);
+    setButtonState(btnId, true);
+    addLog(logId, '🔗 Conectando ao servidor (pareceres) para streaming...', 'info');
+
+    const params = new URLSearchParams({
+        username,
+        password,
+        codigo_turma,
+        trimestre_referencia,
+    });
+
+    const url = `${API_BASE_URL}/lancar-pareceres-por-nota-stream?${params}`;
+
+    const eventSource = new EventSource(url);
+
+    eventSource.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'log') {
+                let type = 'info';
+                if (data.message.includes('✅') || data.message.includes('sucesso')) type = 'success';
+                else if (data.message.includes('❌') || data.message.includes('Erro')) type = 'error';
+                else if (data.message.includes('⚠️') || data.message.includes('Aviso')) type = 'warning';
+                addLog(logId, data.message, type);
+            } else if (data.type === 'done') {
+                addLog(logId, data.message, data.success ? 'success' : 'error');
+                if (data.success) addLog(logId, '✅ Processo concluído com sucesso!', 'success');
+                eventSource.close();
+                setButtonState(btnId, false);
+            }
+        } catch (e) {
+            console.error('Erro ao parsear JSON (pareceres stream):', e);
+        }
+    };
+
+    eventSource.onerror = (error) => {
+        console.error('EventSource error (pareceres):', error);
+        addLog(logId, '❌ Erro de conexão com o servidor (pareceres)', 'error');
+        addLog(logId, 'Verifique se a API está rodando em http://localhost:8001', 'warning');
+        eventSource.close();
+        setButtonState(btnId, false);
+    };
+
+    eventSource.onopen = () => {
+        addLog(logId, '✅ Conexão estabelecida, aguardando logs (pareceres)...', 'success');
+    };
+}
+
 // Função para adicionar log
 function addLog(logElementId, message, type = 'info') {
     const logContainer = document.getElementById(logElementId);
@@ -514,4 +577,17 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Listener para resize
     window.addEventListener('resize', handleResize);
+
+    // Rebind do botão de Pareceres para usar streaming automaticamente
+    const btnPareceres = document.getElementById('btn-pareceres');
+    if (btnPareceres) {
+        btnPareceres.onclick = () => {
+            try {
+                executePareceresStream();
+            } catch (e) {
+                // Fallback para modo antigo se algo falhar
+                executePareceres();
+            }
+        };
+    }
 });

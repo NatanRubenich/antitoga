@@ -462,6 +462,62 @@ def create_app():
         
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     
+    @app.get("/lancar-pareceres-por-nota-stream")
+    async def lancar_pareceres_por_nota_stream(
+        username: str,
+        password: str,
+        codigo_turma: str,
+        trimestre_referencia: str = "TR2",
+    ):
+        """
+        🆕 Versão com STREAMING (SSE) para lançamento de pareceres por nota
+        Não altera o endpoint existente (POST). Apenas adiciona uma alternativa em tempo real.
+        """
+        async def event_generator():
+            log_streamer = LogStreamer()
+            original_stdout = sys.stdout
+            sys.stdout = log_streamer
+            result = {"success": False, "message": ""}
+
+            def run_automation():
+                nonlocal result
+                try:
+                    print("\n" + "="*80)
+                    print(" 📝 NOVA REQUISIÇÃO - PARECERES (STREAM)")
+                    print("-"*80)
+                    print(f" - usuario: {username}")
+                    print(f" - codigo_turma: {codigo_turma}")
+                    print(f" - trimestre: {trimestre_referencia}")
+
+                    success, message = sgn_automation.lancar_pareceres_por_nota(
+                        username=username,
+                        password=password,
+                        codigo_turma=codigo_turma,
+                        trimestre_referencia=trimestre_referencia,
+                    )
+                    result = {"success": success, "message": message}
+                except Exception as e:
+                    result = {"success": False, "message": f"Erro: {str(e)}"}
+                finally:
+                    sys.stdout = original_stdout
+
+            # Executar em thread separada
+            thread = threading.Thread(target=run_automation)
+            thread.start()
+
+            # Enviar logs em tempo real
+            while thread.is_alive() or not log_streamer.queue.empty():
+                log = log_streamer.get_log(timeout=0.01)
+                if log:
+                    yield f"data: {json.dumps({'type': 'log', 'message': log})}\n\n"
+                else:
+                    await asyncio.sleep(0.001)
+
+            # Final
+            yield f"data: {json.dumps({'type': 'done', 'success': result['success'], 'message': result['message']})}\n\n"
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
     
     @app.post("/lancar-conceito-inteligente-RA", response_model=AutomationResponse)
     async def lancar_conceito_inteligente_ra(
