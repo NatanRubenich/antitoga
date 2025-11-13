@@ -41,6 +41,43 @@ http://localhost:8000/docs
 
 ## 📡 Endpoints
 
+### POST /lancar-conceito-trimestre 🚀 APRIMORADO
+Lança conceitos aplicando o **MESMO conceito para TODOS** os alunos da turma.
+
+**MELHORIAS IMPLEMENTADAS:**
+- ✅ **Validação prévia** de elementos da interface
+- ✅ **Retry automático** para falhas temporárias (até 3 tentativas)
+- ✅ **Progresso em tempo real** com estimativa de tempo (ETA)
+- ✅ **Logging detalhado** e estruturado com métricas
+- ✅ **Validação de dados** antes do salvamento
+- ✅ **Tratamento robusto** de erros com recuperação
+- ✅ **Estatísticas completas** de execução
+
+**Body:**
+```json
+{
+  "username": "seu_usuario",
+  "password": "sua_senha",
+  "codigo_turma": "369528",
+  "trimestre_referencia": "TR2",
+  "atitude_observada": "Sempre",
+  "conceito_habilidade": "A"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Processados: 25/25 alunos, 2 recuperados com retry",
+  "logs": [
+    "✅ Elementos da interface validados",
+    "⏱️ Progresso: 24/25 (96.0%) | ETA: 14:32:15",
+    "📊 Taxa de sucesso: 100.0%"
+  ]
+}
+```
+
 ### POST /lancar-conceito-inteligente
 Lança conceitos de forma inteligente baseado nas avaliações cadastradas.
 

@@ -152,16 +152,29 @@ def create_app():
         )
     ):
         """
-        Executa login e lança conceitos para todos os alunos da turma
+        🚀 APRIMORADO: Executa login e lança conceitos para todos os alunos da turma
         
-        Este endpoint realiza o fluxo completo de lançamento de conceitos:
+        MELHORIAS IMPLEMENTADAS:
+        ✅ Validação prévia de elementos da interface
+        ✅ Retry automático para falhas temporárias (até 3 tentativas por aluno)
+        ✅ Progresso em tempo real com estimativa de tempo (ETA)
+        ✅ Logging detalhado e estruturado com métricas
+        ✅ Validação de dados antes do salvamento
+        ✅ Tratamento robusto de erros com recuperação
+        ✅ Estatísticas completas de execução
+        
+        Este endpoint realiza o fluxo APRIMORADO de lançamento de conceitos:
         1. Faz login no sistema SGN usando as credenciais fornecidas
-        2. Navega diretamente para o diário da turma especificada
-        3. Abre a aba de Conceitos
-        4. Para cada aluno na turma:
-           - Acessa a modal de conceitos do aluno
+        2. Valida elementos da interface antes do processamento
+        3. Navega diretamente para o diário da turma especificada
+        4. Abre a aba de Conceitos com validação
+        5. Para cada aluno na turma (com retry automático):
+           - Valida acesso à modal de conceitos do aluno
            - Aplica a opção escolhida em todas as Observações de Atitudes
            - Aplica a opção escolhida em todos os Conceitos de Habilidades
+           - Valida dados preenchidos antes do salvamento
+           - Exibe progresso em tempo real com ETA
+        6. Gera relatório completo com estatísticas de execução
         
         Exemplos de uso:
         - Padrão (Raramente/B): {"username": "usuario", "password": "senha", "codigo_turma": "12345"}
@@ -172,7 +185,7 @@ def create_app():
             request (LoginRequest): Dados de login, código da turma e opções de conceitos
             
         Returns:
-            AutomationResponse: Resultado da automação com estatísticas
+            AutomationResponse: Resultado da automação com estatísticas detalhadas
             
         Example:
             POST /lancar-conceito-trimestre
@@ -186,8 +199,17 @@ def create_app():
             }
             
         Response:
+            {
                 "success": true,
-                "message": "Lançamento de conceitos concluído com sucesso! Processados: 25/25 alunos"
+                "message": "Processados: 25/25 alunos, 2 recuperados com retry",
+                "logs": [
+                    "✅ Elementos da interface validados",
+                    "⏱️ Progresso: 24/25 (96.0%) | ETA: 14:32:15",
+                    "📊 Resultado: Processados: 25/25 alunos, 2 recuperados com retry",
+                    "⏱️ Tempo total: 127.3s",
+                    "📈 Tempo médio por aluno: 5.1s",
+                    "📋 Taxa de sucesso: 100.0%"
+                ]
             }
         """
         # Capturar logs (com Tee para também exibir no terminal)
