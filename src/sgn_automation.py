@@ -2494,49 +2494,17 @@ class SGNAutomation:
                 print("   ❌ Não foi possível obter ViewState")
                 return False
             
-            # Buscar todas as atitudes disponíveis na página
-            # Primeiro descobrir quantas atitudes existem realmente
-            print("   🔍 Descobrindo número real de atitudes...")
-            
-            try:
-                # Buscar elementos de atitude na página para descobrir o número real
-                atitudes_elements = self.driver.find_elements(By.CSS_SELECTOR, "select[id*='observacaoAtitude']")
-                max_atitudes = len(atitudes_elements)
-                print(f"   📊 Encontrados {max_atitudes} elementos de atitude na página")
-                
-                if max_atitudes == 0:
-                    max_atitudes = 55  # Fallback para número padrão
-                    print(f"   ⚠️ Nenhum elemento encontrado, usando fallback: {max_atitudes}")
-                
-            except Exception as e:
-                print(f"   ⚠️ Erro ao descobrir atitudes: {e}")
-                max_atitudes = 55  # Fallback
+            # Usar contadores globais (todos os alunos têm a mesma quantidade)
+            max_atitudes, _ = self.helpers._get_contadores_globais()
             
             # OTIMIZAÇÃO 1: Processar em lotes menores com timeout reduzido (evitar erro 500)
             atitudes_processadas = 0
             lote_size = 10  # Lotes menores para evitar sobrecarregar servidor
             timeout_reduzido = 8  # Timeout um pouco maior para dar tempo ao servidor
             
-            # OTIMIZAÇÃO 2: Pré-validar se atitudes já estão preenchidas
-            print(f"   🔍 Verificando atitudes já preenchidas...")
-            atitudes_pendentes = []
-            
-            for i in range(max_atitudes):
-                try:
-                    select_id = f"formAtitudes:panelAtitudes:dataTableAtitudes:{i}:observacaoAtitude_input"
-                    select_element = self.driver.find_element(By.ID, select_id)
-                    valor_atual = select_element.get_attribute("value")
-                    
-                    # Verificar se já tem o valor correto
-                    if valor_atual != opcao_atitude:
-                        atitudes_pendentes.append(i)
-                    else:
-                        atitudes_processadas += 1
-                except:
-                    # Se não conseguir verificar, assumir que precisa processar
-                    atitudes_pendentes.append(i)
-            
-            print(f"   📊 {len(atitudes_pendentes)} atitudes pendentes de {max_atitudes} total ({atitudes_processadas} já preenchidas)")
+            # OTIMIZAÇÃO 2: Pré-validar se atitudes já estão preenchidas (usando cache global)
+            atitudes_pendentes = self.helpers._verificar_atitudes_pendentes_otimizado(opcao_atitude, max_atitudes)
+            atitudes_processadas = max_atitudes - len(atitudes_pendentes)
             
             if not atitudes_pendentes:
                 print(f"   ✅ Todas as atitudes já estão preenchidas!")

@@ -132,6 +132,47 @@ class SGNAutomationHelpers:
             # Usar fallbacks se der erro
             return 119, 10
     
+    def _verificar_atitudes_pendentes_otimizado(self, opcao_atitude, max_atitudes):
+        """
+        Verifica quais atitudes estão pendentes usando contadores globais
+        
+        Args:
+            opcao_atitude (str): Valor da atitude desejada
+            max_atitudes (int): Total de atitudes (do cache global)
+            
+        Returns:
+            list: Lista de índices das atitudes pendentes
+        """
+        print(f"   🔍 Verificando {max_atitudes} atitudes (usando cache global)...")
+        atitudes_pendentes = []
+        atitudes_ja_preenchidas = 0
+        
+        try:
+            driver = self._get_driver()
+            
+            for i in range(max_atitudes):
+                try:
+                    select_id = f"formAtitudes:panelAtitudes:dataTableAtitudes:{i}:observacaoAtitude_input"
+                    select_element = driver.find_element(By.ID, select_id)
+                    valor_atual = select_element.get_attribute("value")
+                    
+                    # Verificar se já tem o valor correto
+                    if valor_atual != opcao_atitude:
+                        atitudes_pendentes.append(i)
+                    else:
+                        atitudes_ja_preenchidas += 1
+                except:
+                    # Se não conseguir verificar, assumir que precisa processar
+                    atitudes_pendentes.append(i)
+            
+            print(f"   📊 {len(atitudes_pendentes)} atitudes pendentes de {max_atitudes} total ({atitudes_ja_preenchidas} já preenchidas)")
+            return atitudes_pendentes
+            
+        except Exception as e:
+            print(f"   ❌ Erro ao verificar atitudes: {e}")
+            # Se der erro, assumir que todas precisam ser processadas
+            return list(range(max_atitudes))
+    
     def _rate_limit_request(self):
         """
         Implementa rate limiting para evitar sobrecarregar o servidor SGN
