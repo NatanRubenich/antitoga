@@ -2704,14 +2704,14 @@ class SGNAutomation:
         try:
             print(f"     🚀 TENTANDO lançamento de conceitos via HTTP otimizado (MÚLTIPLAS CAPACIDADES)...")
             
-            # 0. DETECTAR E EXPANDIR MÚLTIPLAS CAPACIDADES/PAINÉIS
-            capacidades_processadas = self._detectar_e_expandir_capacidades()
-            
             # 1. TENTAR MÉTODO HTTP OTIMIZADO
             try:
                 viewstate = self.helpers._obter_viewstate_atual()
                 if viewstate:
                     print(f"     ✅ ViewState encontrado para conceitos: {viewstate[:50]}...")
+                    
+                    # Expandir capacidades apenas uma vez por sessão (todos alunos têm a mesma estrutura)
+                    self.helpers._expandir_capacidades_uma_vez()
                     
                     # Buscar TODAS as tabelas de habilidades (múltiplas capacidades)
                     todas_tabelas = self._obter_todas_tabelas_habilidades()

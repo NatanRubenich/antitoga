@@ -34,6 +34,9 @@ class SGNAutomationHelpers:
         self._cache_total_atitudes = None
         self._cache_total_conceitos = None
         self._cache_contadores_timestamp = 0
+        # Cache de estrutura de capacidades (todos alunos têm a mesma estrutura)
+        self._cache_capacidades_expandidas = False
+        self._cache_estrutura_capacidades = None
     
     def _get_driver(self):
         """Obtém o driver atual"""
@@ -172,6 +175,92 @@ class SGNAutomationHelpers:
             print(f"   ❌ Erro ao verificar atitudes: {e}")
             # Se der erro, assumir que todas precisam ser processadas
             return list(range(max_atitudes))
+    
+    def _expandir_capacidades_uma_vez(self):
+        """
+        Expande capacidades apenas uma vez por sessão (todos alunos têm a mesma estrutura)
+        
+        Returns:
+            bool: True se capacidades foram expandidas ou já estavam expandidas
+        """
+        # Se já expandiu nesta sessão, não fazer novamente
+        if self._cache_capacidades_expandidas:
+            print("   ✅ Capacidades já expandidas nesta sessão (usando cache)")
+            return True
+        
+        try:
+            print("   🔍 Expandindo capacidades pela primeira vez na sessão...")
+            driver = self._get_driver()
+            
+            capacidades_expandidas = 0
+            
+            # Procurar por painéis/accordions que podem conter capacidades
+            accordion_selectors = [
+                "//div[contains(@class, 'ui-accordion-header')]",
+                "//div[contains(@id, 'capacidade') or contains(@class, 'capacidade')]",
+                "//div[contains(@id, 'painel') or contains(@class, 'painel')]",
+                "//h3[contains(text(), 'Capacidade') or contains(text(), 'C1') or contains(text(), 'C2') or contains(text(), 'C3')]",
+                "//div[contains(@class, 'ui-fieldset-legend')]"
+            ]
+            
+            for selector in accordion_selectors:
+                try:
+                    elementos = driver.find_elements(By.XPATH, selector)
+                    print(f"     📋 Encontrados {len(elementos)} elementos com seletor: {selector}")
+                    
+                    for elemento in elementos:
+                        try:
+                            # Verificar se o elemento está visível e pode ser clicado
+                            if elemento.is_displayed():
+                                texto = elemento.text.strip()
+                                
+                                # Verificar se parece ser um painel de capacidade
+                                if any(palavra in texto.lower() for palavra in ['capacidade', 'c1', 'c2', 'c3', 'habilidade']):
+                                    print(f"     📂 Possível capacidade encontrada: '{texto[:50]}...'")
+                                    
+                                    # Verificar se está expandido
+                                    class_attr = elemento.get_attribute("class") or ""
+                                    aria_expanded = elemento.get_attribute("aria-expanded")
+                                    
+                                    if ("ui-state-active" not in class_attr and 
+                                        aria_expanded != "true"):
+                                        
+                                        print(f"     🔄 Expandindo painel: {texto[:30]}...")
+                                        
+                                        # Tentar clicar para expandir
+                                        driver.execute_script("arguments[0].scrollIntoView(true);", elemento)
+                                        time.sleep(0.5)
+                                        driver.execute_script("arguments[0].click();", elemento)
+                                        time.sleep(1)
+                                        
+                                        capacidades_expandidas += 1
+                                        print(f"     ✅ Painel expandido: {texto[:30]}")
+                                    else:
+                                        print(f"     ✓ Painel já expandido: {texto[:30]}")
+                                        capacidades_expandidas += 1
+                                        
+                        except Exception as e:
+                            print(f"     ⚠️ Erro ao processar elemento: {e}")
+                            continue
+                            
+                except Exception as e:
+                    print(f"     ⚠️ Erro com seletor {selector}: {e}")
+                    continue
+            
+            # Marcar como expandido para não repetir
+            self._cache_capacidades_expandidas = True
+            self._cache_estrutura_capacidades = capacidades_expandidas
+            
+            if capacidades_expandidas > 0:
+                print(f"   ✅ {capacidades_expandidas} capacidades expandidas e cached para toda a sessão")
+            else:
+                print(f"   ℹ️ Nenhuma capacidade adicional encontrada para expandir")
+            
+            return True
+            
+        except Exception as e:
+            print(f"   ❌ Erro ao expandir capacidades: {e}")
+            return False
     
     def _rate_limit_request(self):
         """
