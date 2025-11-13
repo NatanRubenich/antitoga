@@ -11,6 +11,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import time
 import requests
+import threading
+import concurrent.futures
+from queue import Queue
 
 
 class SGNAutomationHelpers:
@@ -19,12 +22,190 @@ class SGNAutomationHelpers:
     def __init__(self, selenium_manager):
         self.selenium_manager = selenium_manager
         self.driver = None
+        # Cache para otimização de performance
+        self._cached_cookies = None
+        self._cached_headers = None
+        self._cached_url = None
+        self._cache_timestamp = 0
+        # Rate limiting para evitar erro 500
+        self._last_request_time = 0
+        self._min_request_interval = 0.5  # 500ms entre requisições
+        # Cache global de contadores (todos os alunos têm a mesma quantidade)
+        self._cache_total_atitudes = None
+        self._cache_total_conceitos = None
+        self._cache_contadores_timestamp = 0
     
     def _get_driver(self):
         """Obtém o driver atual"""
         if not self.driver:
             self.driver = self.selenium_manager.get_driver()
         return self.driver
+    
+    def _get_cached_request_data(self, force_refresh=False):
+        """
+        Obtém dados de requisição em cache (cookies, headers, URL) para otimizar performance
+        
+        Args:
+            force_refresh (bool): Forçar atualização do cache
+            
+        Returns:
+            tuple: (cookies, headers, url)
+        """
+        current_time = time.time()
+        
+        # Cache válido por 30 segundos
+        if (not force_refresh and 
+            self._cached_cookies and 
+            self._cached_headers and 
+            self._cached_url and 
+            current_time - self._cache_timestamp < 30):
+            return self._cached_cookies, self._cached_headers, self._cached_url
+        
+        # Atualizar cache
+        driver = self._get_driver()
+        
+        self._cached_cookies = {cookie['name']: cookie['value'] for cookie in driver.get_cookies()}
+        self._cached_url = driver.current_url.split('?')[0]
+        self._cached_headers = {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Faces-Request': 'partial/ajax',
+            'User-Agent': driver.execute_script("return navigator.userAgent;"),
+            'Referer': driver.current_url
+        }
+        self._cache_timestamp = current_time
+        
+        return self._cached_cookies, self._cached_headers, self._cached_url
+    
+    def _get_contadores_globais(self, force_refresh=False):
+        """
+        Obtém contadores globais de atitudes e conceitos (cache por sessão)
+        Como todos os alunos têm a mesma quantidade, só precisa verificar uma vez
+        
+        Args:
+            force_refresh (bool): Forçar nova contagem
+            
+        Returns:
+            tuple: (total_atitudes, total_conceitos)
+        """
+        current_time = time.time()
+        
+        # Cache válido por toda a sessão (até forçar refresh)
+        if (not force_refresh and 
+            self._cache_total_atitudes is not None and 
+            self._cache_total_conceitos is not None and 
+            current_time - self._cache_contadores_timestamp < 3600):  # 1 hora
+            return self._cache_total_atitudes, self._cache_total_conceitos
+        
+        try:
+            print("   🔢 Descobrindo contadores globais (primeira vez na sessão)...")
+            driver = self._get_driver()
+            
+            # Contar atitudes
+            try:
+                atitudes_elements = driver.find_elements(By.CSS_SELECTOR, "select[id*='observacaoAtitude']")
+                total_atitudes = len(atitudes_elements)
+                print(f"   📊 Total de atitudes por aluno: {total_atitudes}")
+            except:
+                total_atitudes = 119  # Fallback baseado nos logs
+                print(f"   ⚠️ Usando fallback para atitudes: {total_atitudes}")
+            
+            # Contar conceitos de habilidades
+            try:
+                conceitos_elements = driver.find_elements(By.CSS_SELECTOR, "select[id*='notaConceito']")
+                total_conceitos = len(conceitos_elements)
+                print(f"   📊 Total de conceitos por aluno: {total_conceitos}")
+            except:
+                total_conceitos = 10  # Fallback baseado nos logs
+                print(f"   ⚠️ Usando fallback para conceitos: {total_conceitos}")
+            
+            # Salvar no cache
+            self._cache_total_atitudes = total_atitudes
+            self._cache_total_conceitos = total_conceitos
+            self._cache_contadores_timestamp = current_time
+            
+            print(f"   ✅ Contadores globais cached: {total_atitudes} atitudes, {total_conceitos} conceitos")
+            return total_atitudes, total_conceitos
+            
+        except Exception as e:
+            print(f"   ❌ Erro ao obter contadores globais: {e}")
+            # Usar fallbacks se der erro
+            return 119, 10
+    
+    def _rate_limit_request(self):
+        """
+        Implementa rate limiting para evitar sobrecarregar o servidor SGN
+        """
+        current_time = time.time()
+        time_since_last_request = current_time - self._last_request_time
+        
+        if time_since_last_request < self._min_request_interval:
+            sleep_time = self._min_request_interval - time_since_last_request
+            time.sleep(sleep_time)
+        
+        self._last_request_time = time.time()
+    
+    def _detectar_sessao_expirada(self, response_text):
+        """
+        Detecta se a sessão expirou baseado na resposta do servidor
+        
+        Args:
+            response_text (str): Texto da resposta HTTP
+            
+        Returns:
+            bool: True se sessão expirou, False caso contrário
+        """
+        indicadores_sessao_expirada = [
+            'Oops! Ocorreu um erro ao carregar essa página',
+            'logic:notAuthenticated',
+            'login.html',
+            'autenticacao',
+            'session expired',
+            'sessão expirou',
+            'redirect url="/login.html"',
+            'redirect url="/errors/403.html"'
+        ]
+        
+        response_lower = response_text.lower()
+        for indicador in indicadores_sessao_expirada:
+            if indicador.lower() in response_lower:
+                return True
+        
+        return False
+    
+    def _tentar_renovar_sessao(self):
+        """
+        Tenta renovar a sessão navegando para a página principal
+        
+        Returns:
+            bool: True se conseguiu renovar, False caso contrário
+        """
+        try:
+            print("   🔄 Tentando renovar sessão...")
+            driver = self._get_driver()
+            
+            # Navegar para página principal do SGN
+            driver.get("https://sgn.sesisenai.org.br/pages/diarioClasse/diario-classe.html")
+            
+            # Aguardar carregamento
+            time.sleep(3)
+            
+            # Verificar se conseguiu acessar
+            current_url = driver.current_url
+            if "diario-classe.html" in current_url and "login" not in current_url:
+                print("   ✅ Sessão renovada com sucesso")
+                # Limpar cache para forçar atualização
+                self._cached_cookies = None
+                self._cached_headers = None
+                self._cached_url = None
+                return True
+            else:
+                print(f"   ❌ Falha ao renovar sessão - URL atual: {current_url}")
+                return False
+                
+        except Exception as e:
+            print(f"   ❌ Erro ao tentar renovar sessão: {e}")
+            return False
     
     def _validar_elementos_conceitos(self):
         """
@@ -1273,6 +1454,14 @@ class SGNAutomationHelpers:
         try:
             driver = self._get_driver()
             
+            # Extrair valor da atitude se for Enum
+            if hasattr(valor_atitude, 'value'):
+                valor_final = str(valor_atitude.value)
+            elif hasattr(valor_atitude, 'name'):
+                valor_final = str(valor_atitude.name).replace('_', ' ').replace('AS VEZES', 'Às vezes')
+            else:
+                valor_final = str(valor_atitude)
+            
             # Obter cookies e URL
             cookies = {cookie['name']: cookie['value'] for cookie in driver.get_cookies()}
             url = driver.current_url
@@ -1297,7 +1486,7 @@ class SGNAutomationHelpers:
                 'javax.faces.behavior.event': 'valueChange',
                 'javax.faces.partial.event': 'change',
                 f'{element_id}_focus': '',
-                f'{element_id}_input': valor_atitude,
+                f'{element_id}_input': valor_final,
                 'javax.faces.ViewState': viewstate
             }
             
@@ -1312,7 +1501,7 @@ class SGNAutomationHelpers:
                 url,
                 data=urlencode(post_data),
                 headers=headers,
-                timeout=30
+                timeout=10  # Timeout reduzido para performance
             )
             
             if response.status_code == 200:
@@ -1321,7 +1510,7 @@ class SGNAutomationHelpers:
                     print(f"   🚨 ERRO 500 DETECTADO ao lançar atitude: Servidor SGN com problema!")
                     return False
                 
-                print(f"   ✅ Atitude lançada com sucesso: {valor_atitude}")
+                print(f"   ✅ Atitude lançada com sucesso: {valor_final}")
                 return True
             else:
                 print(f"   ❌ Erro na requisição: {response.status_code}")
@@ -1330,6 +1519,263 @@ class SGNAutomationHelpers:
         except Exception as e:
             print(f"   ❌ Erro ao lançar atitude: {e}")
             return False
+
+    def _lancar_atitude_via_requisicao_rapida(self, data_ri, atitude_id, valor_atitude, viewstate, timeout=5):
+        """
+        Versão otimizada para lançar atitude com timeout reduzido e menos logs
+        
+        Args:
+            data_ri (str): Índice da linha do aluno
+            atitude_id (str): ID da atitude
+            valor_atitude (str): Valor da atitude
+            viewstate (str): ViewState atual da sessão
+            timeout (int): Timeout em segundos (padrão: 5)
+            
+        Returns:
+            bool: True se sucesso, False caso contrário
+        """
+        try:
+            driver = self._get_driver()
+            
+            # Extrair valor da atitude se for Enum
+            if hasattr(valor_atitude, 'value'):
+                valor_final = str(valor_atitude.value)
+            elif hasattr(valor_atitude, 'name'):
+                valor_final = str(valor_atitude.name).replace('_', ' ').replace('AS VEZES', 'Às vezes')
+            else:
+                valor_final = str(valor_atitude)
+            
+            # Obter cookies e URL (cache otimizado)
+            cookies = {cookie['name']: cookie['value'] for cookie in driver.get_cookies()}
+            url = driver.current_url.split('?')[0]
+            
+            headers = {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Faces-Request': 'partial/ajax',
+                'User-Agent': driver.execute_script("return navigator.userAgent;")
+            }
+            
+            element_id = f"formAtitudes:panelAtitudes:dataTableAtitudes:{atitude_id}:observacaoAtitude"
+            
+            post_data = {
+                'javax.faces.partial.ajax': 'true',
+                'javax.faces.source': element_id,
+                'javax.faces.partial.execute': element_id,
+                'javax.faces.partial.render': element_id,
+                'javax.faces.behavior.event': 'valueChange',
+                'javax.faces.partial.event': 'change',
+                f'{element_id}_focus': '',
+                f'{element_id}_input': valor_final,
+                'javax.faces.ViewState': viewstate
+            }
+            
+            from urllib.parse import urlencode
+            
+            session = requests.Session()
+            for name, value in cookies.items():
+                session.cookies.set(name, value)
+            
+            response = session.post(
+                url,
+                data=urlencode(post_data),
+                headers=headers,
+                timeout=timeout
+            )
+            
+            # Verificação rápida de sucesso
+            return response.status_code == 200 and 'redirect url="/errors/500.html"' not in response.text
+                
+        except Exception:
+            return False
+
+    def _lancar_lote_atitudes_paralelo(self, lote_indices, opcao_atitude, viewstate, timeout=3):
+        """
+        Lança um lote de atitudes em paralelo usando threads
+        
+        Args:
+            lote_indices (list): Lista de índices das atitudes
+            opcao_atitude (str): Valor da atitude
+            viewstate (str): ViewState atual
+            timeout (int): Timeout por requisição
+            
+        Returns:
+            tuple: (sucessos, falhas)
+        """
+        sucessos = 0
+        falhas = 0
+        
+        # Obter dados em cache uma vez para todo o lote
+        cookies, headers, url = self._get_cached_request_data()
+        
+        def processar_atitude(i):
+            try:
+                # Usar dados em cache para evitar acessar Selenium em cada thread
+                sucesso = self._lancar_atitude_via_requisicao_otimizada(str(i), str(i), opcao_atitude, viewstate, cookies, headers, url, timeout)
+                return (i, sucesso)
+            except Exception:
+                return (i, False)
+        
+        # Usar ThreadPoolExecutor para paralelizar (máximo 2 threads para evitar erro 500)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            # Submeter todas as tarefas
+            futures = [executor.submit(processar_atitude, i) for i in lote_indices]
+            
+            # Coletar resultados
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    i, sucesso = future.result(timeout=timeout + 2)  # Timeout um pouco maior
+                    if sucesso:
+                        sucessos += 1
+                        print(f"   ✅ Atitude {i+1} preenchida: {opcao_atitude}")
+                    else:
+                        falhas += 1
+                        print(f"   ❌ Falha na atitude {i+1}")
+                except Exception as e:
+                    falhas += 1
+                    print(f"   ❌ Erro na thread da atitude: {e}")
+        
+        return sucessos, falhas
+
+    def _lancar_atitude_via_requisicao_otimizada(self, data_ri, atitude_id, valor_atitude, viewstate, cookies, headers, url, timeout=3):
+        """
+        Versão ultra-otimizada que usa dados em cache (thread-safe) com retry e rate limiting
+        
+        Args:
+            data_ri (str): Índice da linha do aluno
+            atitude_id (str): ID da atitude
+            valor_atitude (str): Valor da atitude
+            viewstate (str): ViewState atual da sessão
+            cookies (dict): Cookies em cache
+            headers (dict): Headers em cache
+            url (str): URL em cache
+            timeout (int): Timeout em segundos
+            
+        Returns:
+            bool: True se sucesso, False caso contrário
+        """
+        max_retries = 2
+        base_delay = 1.0
+        
+        for attempt in range(max_retries + 1):
+            try:
+                # Rate limiting para evitar sobrecarregar servidor
+                self._rate_limit_request()
+                
+                # Extrair valor da atitude se for Enum
+                if hasattr(valor_atitude, 'value'):
+                    valor_final = str(valor_atitude.value)
+                elif hasattr(valor_atitude, 'name'):
+                    valor_final = str(valor_atitude.name).replace('_', ' ').replace('AS VEZES', 'Às vezes')
+                else:
+                    valor_final = str(valor_atitude)
+                
+                element_id = f"formAtitudes:panelAtitudes:dataTableAtitudes:{atitude_id}:observacaoAtitude"
+                
+                post_data = {
+                    'javax.faces.partial.ajax': 'true',
+                    'javax.faces.source': element_id,
+                    'javax.faces.partial.execute': element_id,
+                    'javax.faces.partial.render': element_id,
+                    'javax.faces.behavior.event': 'valueChange',
+                    'javax.faces.partial.event': 'change',
+                    f'{element_id}_focus': '',
+                    f'{element_id}_input': valor_final,
+                    'javax.faces.ViewState': viewstate
+                }
+                
+                from urllib.parse import urlencode
+                
+                session = requests.Session()
+                for name, value in cookies.items():
+                    session.cookies.set(name, value)
+                
+                response = session.post(
+                    url,
+                    data=urlencode(post_data),
+                    headers=headers,
+                    timeout=timeout
+                )
+                
+                # Verificar se foi sucesso
+                if response.status_code == 200 and 'redirect url="/errors/500.html"' not in response.text:
+                    # Verificar se não é erro de sessão
+                    if not self._detectar_sessao_expirada(response.text):
+                        return True
+                
+                # Se foi erro de sessão, tentar renovar
+                if self._detectar_sessao_expirada(response.text):
+                    print(f"   🚨 Sessão expirada detectada na atitude {atitude_id}")
+                    if attempt < max_retries and self._tentar_renovar_sessao():
+                        # Atualizar dados após renovação
+                        cookies, headers, url = self._get_cached_request_data(force_refresh=True)
+                        delay = base_delay * (2 ** attempt)
+                        time.sleep(delay)
+                        continue
+                    else:
+                        print(f"   ❌ Não foi possível renovar sessão para atitude {atitude_id}")
+                        return False
+                
+                # Se foi erro 500, tentar novamente
+                if 'redirect url="/errors/500.html"' in response.text and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)  # Backoff exponencial
+                    time.sleep(delay)
+                    continue
+                
+                return False
+                    
+            except Exception:
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    time.sleep(delay)
+                    continue
+                return False
+        
+        return False
+
+    def _lancar_conceitos_habilidades_paralelo(self, conceitos_pendentes, conceito_valor, viewstate, timeout=3):
+        """
+        Lança conceitos de habilidades em paralelo usando threads
+        
+        Args:
+            conceitos_pendentes (list): Lista de data-ri dos conceitos pendentes
+            conceito_valor (str): Valor do conceito
+            viewstate (str): ViewState atual
+            timeout (int): Timeout por requisição
+            
+        Returns:
+            tuple: (sucessos, falhas)
+        """
+        sucessos = 0
+        falhas = 0
+        
+        def processar_conceito(data_ri):
+            try:
+                sucesso = self._lancar_conceito_habilidade_via_requisicao(data_ri, conceito_valor, viewstate)
+                return (data_ri, sucesso)
+            except Exception:
+                return (data_ri, False)
+        
+        # Usar ThreadPoolExecutor para paralelizar (máximo 3 threads para conceitos - evitar erro 500)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            # Submeter todas as tarefas
+            futures = [executor.submit(processar_conceito, data_ri) for data_ri in conceitos_pendentes]
+            
+            # Coletar resultados
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    data_ri, sucesso = future.result(timeout=timeout + 3)  # Timeout maior para conceitos
+                    if sucesso:
+                        sucessos += 1
+                        print(f"   ✅ Conceito {data_ri} preenchido: {conceito_valor}")
+                    else:
+                        falhas += 1
+                        print(f"   ❌ Falha no conceito {data_ri}")
+                except Exception as e:
+                    falhas += 1
+                    print(f"   ❌ Erro na thread do conceito: {e}")
+        
+        return sucessos, falhas
     
     def _lancar_conceito_via_requisicao(self, data_ri, avaliacao_id, conceito, viewstate):
         """
@@ -1499,6 +1945,11 @@ class SGNAutomationHelpers:
             if response.status_code == 200:
                 # Debug: mostrar resposta
                 print(f"   📋 DEBUG: Resposta HTTP ({len(response.text)} chars): {response.text[:200]}...")
+                
+                # Verificar se a sessão expirou
+                if self._detectar_sessao_expirada(response.text):
+                    print(f"   🚨 Sessão expirada detectada no conceito data-ri={data_ri}")
+                    return False
                 
                 # Verificar se a resposta contém erro 500
                 if 'redirect url="/errors/500.html"' in response.text:

@@ -2507,35 +2507,77 @@ class SGNAutomation:
                 if max_atitudes == 0:
                     max_atitudes = 55  # Fallback para número padrão
                     print(f"   ⚠️ Nenhum elemento encontrado, usando fallback: {max_atitudes}")
-                    
+                
             except Exception as e:
-                max_atitudes = 55  # Fallback seguro
-                print(f"   ⚠️ Erro ao descobrir atitudes, usando fallback: {max_atitudes}")
+                print(f"   ⚠️ Erro ao descobrir atitudes: {e}")
+                max_atitudes = 55  # Fallback
             
+            # OTIMIZAÇÃO 1: Processar em lotes menores com timeout reduzido (evitar erro 500)
             atitudes_processadas = 0
+            lote_size = 10  # Lotes menores para evitar sobrecarregar servidor
+            timeout_reduzido = 8  # Timeout um pouco maior para dar tempo ao servidor
             
-            for atitude_id in range(0, max_atitudes):  # Usar número real de atitudes
+            # OTIMIZAÇÃO 2: Pré-validar se atitudes já estão preenchidas
+            print(f"   🔍 Verificando atitudes já preenchidas...")
+            atitudes_pendentes = []
+            
+            for i in range(max_atitudes):
                 try:
-                    sucesso = self.helpers._lancar_atitude_via_requisicao(
-                        data_ri=None,  # Não usado para atitudes
-                        atitude_id=str(atitude_id),
-                        valor_atitude=opcao_atitude,
-                        viewstate=viewstate
-                    )
+                    select_id = f"formAtitudes:panelAtitudes:dataTableAtitudes:{i}:observacaoAtitude_input"
+                    select_element = self.driver.find_element(By.ID, select_id)
+                    valor_atual = select_element.get_attribute("value")
                     
-                    if sucesso:
-                        atitudes_processadas += 1
-                        print(f"   ✅ Atitude {atitude_id} preenchida: {opcao_atitude}")
+                    # Verificar se já tem o valor correto
+                    if valor_atual != opcao_atitude:
+                        atitudes_pendentes.append(i)
                     else:
-                        # Se falhar, pode ser que não existe mais atitudes
-                        if atitudes_processadas > 0:
-                            break
-                        
-                except Exception as e:
-                    # Se der erro, pode ser que não existe mais atitudes
-                    if atitudes_processadas > 0:
-                        break
-                    continue
+                        atitudes_processadas += 1
+                except:
+                    # Se não conseguir verificar, assumir que precisa processar
+                    atitudes_pendentes.append(i)
+            
+            print(f"   📊 {len(atitudes_pendentes)} atitudes pendentes de {max_atitudes} total ({atitudes_processadas} já preenchidas)")
+            
+            if not atitudes_pendentes:
+                print(f"   ✅ Todas as atitudes já estão preenchidas!")
+                return True
+            
+            # OTIMIZAÇÃO 3: Processar apenas as pendentes em lotes PARALELOS
+            for lote_inicio in range(0, len(atitudes_pendentes), lote_size):
+                lote_fim = min(lote_inicio + lote_size, len(atitudes_pendentes))
+                lote_indices = atitudes_pendentes[lote_inicio:lote_fim]
+                
+                print(f"   🧵 Processando lote {lote_inicio//lote_size + 1} PARALELO: {len(lote_indices)} atitudes pendentes")
+                
+                # OTIMIZAÇÃO 4: Processar lote em PARALELO com threads (modo conservador)
+                sucessos_lote, falhas_lote = self.helpers._lancar_lote_atitudes_paralelo(
+                    lote_indices, opcao_atitude, viewstate, timeout_reduzido
+                )
+                
+                atitudes_processadas += sucessos_lote
+                print(f"   📊 Lote {lote_inicio//lote_size + 1}: {sucessos_lote} sucessos, {falhas_lote} falhas")
+                
+                # Se muitas falhas (>70%), verificar se é problema de sessão
+                if falhas_lote > 0 and (falhas_lote / len(lote_indices)) > 0.7:
+                    print(f"   ⚠️ Muitas falhas no lote ({falhas_lote}/{len(lote_indices)}), verificando sessão...")
+                    
+                    # Tentar renovar sessão se muitas falhas
+                    if self.helpers._tentar_renovar_sessao():
+                        print(f"   ✅ Sessão renovada, continuando processamento")
+                    else:
+                        print(f"   ❌ Não foi possível renovar sessão, forçando renovação de cache")
+                        # Forçar renovação de cache para próximo lote
+                        self.helpers._get_cached_request_data(force_refresh=True)
+                
+                # OTIMIZAÇÃO 5: Renovar ViewState apenas entre lotes
+                if lote_fim < len(atitudes_pendentes):
+                    viewstate_novo = self.helpers._obter_viewstate_atual()
+                    if viewstate_novo:
+                        viewstate = viewstate_novo
+                        print(f"   🔄 ViewState renovado após lote {lote_inicio//lote_size + 1}")
+                    
+                    # Pausa mínima entre lotes
+                    time.sleep(0.1)  # Pausa ainda menor
             
             if atitudes_processadas > 0:
                 print(f"   ✅ {atitudes_processadas} atitudes preenchidas com sucesso")
@@ -2737,77 +2779,95 @@ class SGNAutomation:
                             print(f"     ⚠️ {nome_capacidade} não possui habilidades - pulando...")
                             continue
                         
-                        # Processar cada linha da tabela com sistema de retry
-                        conceitos_pendentes = list(enumerate(tabela_info['linhas']))  # Lista de (índice, linha) pendentes
+                        # OTIMIZAÇÃO: Pré-filtrar conceitos que já estão corretos
+                        conceitos_pendentes_data_ri = []
+                        conceito_esperado = opcao_conceito.split('.')[-1] if '.' in opcao_conceito else opcao_conceito
+                        
+                        print(f"       🔍 Verificando conceitos já preenchidos em {nome_capacidade}...")
+                        for i, linha in enumerate(tabela_info['linhas']):
+                            try:
+                                data_ri = linha.get_attribute("data-ri")
+                                select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito"
+                                select_element = self.driver.find_element(By.ID, select_id)
+                                valor_atual = select_element.get_attribute("value")
+                                
+                                if valor_atual != conceito_esperado:
+                                    conceitos_pendentes_data_ri.append(data_ri)
+                                else:
+                                    conceitos_http_ok += 1
+                                    print(f"       ✓ {nome_capacidade} - data-ri={data_ri} já tem '{valor_atual}'")
+                            except:
+                                # Se não conseguir verificar, assumir que precisa processar
+                                conceitos_pendentes_data_ri.append(linha.get_attribute("data-ri"))
+                        
+                        print(f"       📊 {nome_capacidade}: {len(conceitos_pendentes_data_ri)} conceitos pendentes de {len(tabela_info['linhas'])} total")
+                        
+                        if not conceitos_pendentes_data_ri:
+                            print(f"       ✅ {nome_capacidade}: Todos os conceitos já estão preenchidos!")
+                            continue
+                        
+                        # OTIMIZAÇÃO: Processar conceitos em PARALELO com retry
                         max_tentativas = 3
+                        lote_size_conceitos = 10  # Lotes menores para conceitos
                         
                         for tentativa in range(max_tentativas):
-                            if not conceitos_pendentes:
+                            if not conceitos_pendentes_data_ri:
                                 break
                                 
-                            print(f"       🔄 Tentativa {tentativa + 1}/{max_tentativas}: {len(conceitos_pendentes)} conceitos pendentes")
-                            conceitos_processados_nesta_tentativa = []
+                            print(f"       🔄 Tentativa {tentativa + 1}/{max_tentativas}: {len(conceitos_pendentes_data_ri)} conceitos pendentes")
                             
-                            for i, linha in conceitos_pendentes:
-                                try:
-                                    data_ri = linha.get_attribute("data-ri")
-                                    
-                                    # Verificar valor atual do conceito antes de lançar
-                                    try:
-                                        select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito"
-                                        select_element = self.driver.find_element(By.ID, select_id)
-                                        valor_atual = select_element.get_attribute("value")
-                                        
-                                        # Se já tem o valor correto, pular
-                                        conceito_esperado = opcao_conceito.split('.')[-1] if '.' in opcao_conceito else opcao_conceito
-                                        if valor_atual == conceito_esperado:
-                                            print(f"       ✓ {nome_capacidade} - Linha {i+1} (data-ri={data_ri}) - Já tem '{valor_atual}'")
-                                            conceitos_processados_nesta_tentativa.append((i, linha))
-                                            conceitos_http_ok += 1
-                                            continue
+                            # Processar em lotes paralelos
+                            conceitos_processados_com_sucesso = []
+                            
+                            for lote_inicio in range(0, len(conceitos_pendentes_data_ri), lote_size_conceitos):
+                                lote_fim = min(lote_inicio + lote_size_conceitos, len(conceitos_pendentes_data_ri))
+                                lote_data_ri = conceitos_pendentes_data_ri[lote_inicio:lote_fim]
+                                
+                                print(f"         🧵 Processando lote PARALELO {lote_inicio//lote_size_conceitos + 1}: {len(lote_data_ri)} conceitos")
+                                
+                                # Processar lote em paralelo
+                                sucessos_lote, falhas_lote = self.helpers._lancar_conceitos_habilidades_paralelo(
+                                    lote_data_ri, conceito_esperado, viewstate, timeout=3
+                                )
+                                
+                                conceitos_http_ok += sucessos_lote
+                                conceitos_falharam += falhas_lote
+                                
+                                # Marcar sucessos para remoção da lista de pendentes
+                                if sucessos_lote > 0:
+                                    # Verificar quais conceitos foram realmente processados
+                                    for data_ri in lote_data_ri:
+                                        try:
+                                            select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito"
+                                            select_element = self.driver.find_element(By.ID, select_id)
+                                            valor_atual = select_element.get_attribute("value")
                                             
-                                        print(f"       📋 {nome_capacidade} - Linha {i+1} (data-ri={data_ri}) - Valor atual: '{valor_atual}' -> '{conceito_esperado}'")
-                                    except:
-                                        print(f"       📋 {nome_capacidade} - Linha {i+1} (data-ri={data_ri}) - Não conseguiu ler valor atual")
-                                    
-                                    # RENOVAR VIEWSTATE A CADA 3 REQUISIÇÕES PARA EVITAR EXPIRAÇÃO
-                                    if (conceitos_http_ok + conceitos_falharam) > 0 and (conceitos_http_ok + conceitos_falharam) % 3 == 0:
-                                        print(f"       🔄 Renovando ViewState após {conceitos_http_ok + conceitos_falharam} conceitos...")
-                                        viewstate_novo = self.helpers._obter_viewstate_atual()
-                                        if viewstate_novo:
-                                            viewstate = viewstate_novo
-                                            print(f"       ✅ ViewState renovado: {viewstate[:50]}...")
-                                    
-                                    print(f"       📝 {nome_capacidade} - Lançando conceito HTTP linha {i+1} (data-ri={data_ri}) -> {opcao_conceito}")
-                                    
-                                    # Usar novo método HTTP
-                                    sucesso = self.helpers._lancar_conceito_habilidade_via_requisicao(data_ri, opcao_conceito, viewstate)
-                                    if sucesso:
-                                        conceitos_processados_nesta_tentativa.append((i, linha))
-                                        conceitos_http_ok += 1
-                                        print(f"       ✅ SUCESSO {nome_capacidade} linha {i+1}")
-                                        time.sleep(0.3)  # Pausa maior para garantir processamento
-                                    else:
-                                        conceitos_falharam += 1
-                                        print(f"       ❌ FALHA HTTP {nome_capacidade} para data-ri={data_ri}")
-                                        
-                                except Exception as e:
-                                    conceitos_falharam += 1
-                                    print(f"       ❌ ERRO HTTP {nome_capacidade} linha {i+1}: {e}")
-                                    continue
+                                            if valor_atual == conceito_esperado:
+                                                conceitos_processados_com_sucesso.append(data_ri)
+                                        except:
+                                            pass
+                                
+                                print(f"         📊 Lote {lote_inicio//lote_size_conceitos + 1}: {sucessos_lote} sucessos, {falhas_lote} falhas")
+                                
+                                # Renovar ViewState entre lotes se necessário
+                                if lote_fim < len(conceitos_pendentes_data_ri):
+                                    viewstate_novo = self.helpers._obter_viewstate_atual()
+                                    if viewstate_novo:
+                                        viewstate = viewstate_novo
+                                    time.sleep(0.1)  # Pausa mínima entre lotes
                             
                             # Remover conceitos processados com sucesso da lista de pendentes
-                            for item in conceitos_processados_nesta_tentativa:
-                                if item in conceitos_pendentes:
-                                    conceitos_pendentes.remove(item)
+                            for data_ri in conceitos_processados_com_sucesso:
+                                if data_ri in conceitos_pendentes_data_ri:
+                                    conceitos_pendentes_data_ri.remove(data_ri)
                             
                             # Se ainda há pendentes, aguardar antes da próxima tentativa
-                            if conceitos_pendentes and tentativa < max_tentativas - 1:
-                                print(f"       ⏳ Aguardando 2s antes da próxima tentativa...")
-                                time.sleep(2)
+                            if conceitos_pendentes_data_ri and tentativa < max_tentativas - 1:
+                                print(f"       ⏳ Aguardando 1s antes da próxima tentativa...")
+                                time.sleep(1)
                         
                         # Relatório final desta capacidade
-                        conceitos_sucesso_capacidade = len(tabela_info['linhas']) - len(conceitos_pendentes)
+                        conceitos_sucesso_capacidade = len(tabela_info['linhas']) - len(conceitos_pendentes_data_ri)
                         print(f"       📊 {nome_capacidade}: {conceitos_sucesso_capacidade}/{len(tabela_info['linhas'])} conceitos lançados")
                         
                         total_linhas_processadas += len(tabela_info['linhas'])
