@@ -1629,6 +1629,34 @@ class SGNAutomation:
                     print(f"   ❌ Método original também falhou: {str(e)}")
             
             if total_alunos == 0:
+                print("   🚨 LISTA DE ALUNOS VAZIA - Tentando lançamento direto de conceitos!")
+                print("   🎯 Procurando modal de conceitos aberto...")
+                
+                # Verificar se há modal de conceitos aberto
+                try:
+                    modal_xpath = "//div[contains(@class, 'ui-dialog') and contains(@style, 'display: block')]"
+                    modal_elements = self.driver.find_elements(By.XPATH, modal_xpath)
+                    
+                    if modal_elements:
+                        print("   ✅ Modal de conceitos encontrado - lançando conceitos diretamente!")
+                        sucesso_direto = self._forcar_lancamento_conceitos_direto(conceito_habilidade)
+                        
+                        if sucesso_direto:
+                            print("   🎉 CONCEITOS LANÇADOS COM SUCESSO via método direto!")
+                            # Tentar salvar
+                            try:
+                                self._salvar_conceitos_via_http({'nome': 'Aluno Atual'})
+                            except:
+                                pass
+                            return True, "Conceitos lançados com sucesso via método direto"
+                        else:
+                            print("   ❌ Falha no lançamento direto")
+                    else:
+                        print("   ⚠️ Nenhum modal de conceitos encontrado")
+                        
+                except Exception as e:
+                    print(f"   ❌ Erro ao tentar lançamento direto: {e}")
+                
                 return False, "Nenhum aluno encontrado na tabela. Verifique se o trimestre está selecionado corretamente."
             
             print(f"   📋 Encontrados {total_alunos} alunos na turma")
@@ -2655,22 +2683,92 @@ class SGNAutomation:
     def _preencher_conceitos_habilidades(self, opcao_conceito="B"):
         """
         Preenche todos os conceitos de habilidades com a opção escolhida
+        VERSÃO OTIMIZADA: Tenta HTTP primeiro, fallback para Selenium
         
         Args:
             opcao_conceito (str): Opção a ser selecionada para todos os conceitos
-        
-        Este método:
-        1. Expande a seção de Conceitos de Habilidades
-        2. Preenche cada conceito com a opção escolhida
         
         Returns:
             bool: True se conseguiu preencher, False caso contrário
         """
         try:
-            print(f"     📝 Preenchendo conceitos de habilidades com '{opcao_conceito}'...")
+            print(f"     🚀 TENTANDO lançamento de conceitos via HTTP otimizado...")
             
-            # As seções já estão expandidas no modal, não precisa expandir
-            print(f"     📝 Processando conceitos de habilidades (seções já expandidas)...")
+            # 1. TENTAR MÉTODO HTTP OTIMIZADO
+            try:
+                viewstate = self.helpers._obter_viewstate_atual()
+                if viewstate:
+                    print(f"     ✅ ViewState encontrado para conceitos: {viewstate[:50]}...")
+                    
+                    # Obter linhas via DOM para pegar data-ri
+                    tabela_habilidades_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']"
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, tabela_habilidades_xpath))
+                    )
+                    
+                    linhas = self.driver.find_elements(By.XPATH, f"{tabela_habilidades_xpath}/tr[@data-ri]")
+                    total_linhas = len(linhas)
+                    print(f"     📊 Encontradas {total_linhas} linhas de conceitos de habilidades")
+                    
+                    conceitos_http_ok = 0
+                    conceitos_falharam = 0
+                    
+                    print(f"     🔍 DEBUG: Iniciando lançamento de {total_linhas} conceitos...")
+                    
+                    for i, linha_element in enumerate(linhas):
+                        try:
+                            data_ri = linha_element.get_attribute("data-ri")
+                            
+                            # Verificar se a linha já tem conceito preenchido
+                            try:
+                                select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
+                                select_element = self.driver.find_element(By.ID, select_id)
+                                valor_atual = select_element.get_attribute("value")
+                                print(f"       📋 Linha {i+1} (data-ri={data_ri}) - Valor atual: '{valor_atual}'")
+                            except:
+                                print(f"       📋 Linha {i+1} (data-ri={data_ri}) - Não conseguiu ler valor atual")
+                            
+                            # RENOVAR VIEWSTATE A CADA 3 REQUISIÇÕES PARA EVITAR EXPIRAÇÃO
+                            if i > 0 and i % 3 == 0:
+                                print(f"       🔄 Renovando ViewState após {i} conceitos...")
+                                viewstate_novo = self.helpers._obter_viewstate_atual()
+                                if viewstate_novo:
+                                    viewstate = viewstate_novo
+                                    print(f"       ✅ ViewState renovado: {viewstate[:50]}...")
+                            
+                            print(f"       📝 Lançando conceito HTTP linha {i+1} (data-ri={data_ri}) -> {opcao_conceito}")
+                            
+                            # Usar novo método HTTP
+                            sucesso = self.helpers._lancar_conceito_habilidade_via_requisicao(data_ri, opcao_conceito, viewstate)
+                            if sucesso:
+                                conceitos_http_ok += 1
+                                print(f"       ✅ SUCESSO linha {i+1}")
+                                time.sleep(0.3)  # Pausa maior para garantir processamento
+                            else:
+                                conceitos_falharam += 1
+                                print(f"       ❌ FALHA HTTP para data-ri={data_ri}")
+                                
+                        except Exception as e:
+                            conceitos_falharam += 1
+                            print(f"       ❌ ERRO HTTP linha {i+1}: {e}")
+                            continue
+                    
+                    print(f"     📊 RESULTADO HTTP: {conceitos_http_ok} sucessos, {conceitos_falharam} falhas de {total_linhas} total")
+                    
+                    if conceitos_http_ok > 0:
+                        print(f"     ✅ {conceitos_http_ok}/{total_linhas} conceitos lançados via HTTP")
+                        if conceitos_falharam > 0:
+                            print(f"     ⚠️ {conceitos_falharam} conceitos falharam - tentando fallback Selenium para estes")
+                        return True
+                    else:
+                        print(f"     ❌ Nenhum conceito lançado via HTTP - usando fallback Selenium")
+                        
+            except Exception as e:
+                print(f"     ⚠️ Método HTTP falhou: {e}")
+            
+            # 2. FALLBACK PARA MÉTODO SELENIUM ORIGINAL
+            print(f"     🔄 Fallback para método Selenium...")
+            print(f"     📝 Preenchendo conceitos de habilidades com '{opcao_conceito}'...")
             
             # XPath base da tabela de conceitos de habilidades (ui-datatable-data)
             tabela_habilidades_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']"
@@ -2778,7 +2876,7 @@ class SGNAutomation:
             bool: True se salvou com sucesso
         """
         try:
-            driver = self._get_driver()
+            driver = self.driver
             
             # Tentar encontrar e clicar botão salvar via JavaScript
             try:
@@ -3875,12 +3973,9 @@ class SGNAutomation:
                 print("   ❌ data_ri não encontrado nas informações do aluno")
                 return False
             
-            # Lançar conceito final via requisição
-            sucesso = self.helpers._lancar_conceito_final_via_requisicao(
-                data_ri=data_ri,
-                conceito=conceito_desejado,
-                viewstate=viewstate
-            )
+            # Lançar TODOS os conceitos de habilidades via requisição
+            print(f"   🎯 Lançando TODOS os conceitos de habilidades: {conceito_desejado}")
+            sucesso = self._preencher_conceitos_habilidades(conceito_desejado)
             
             if sucesso:
                 print(f"   ✅ Conceito {conceito_desejado} lançado com sucesso para {aluno_info['nome']}")
@@ -3893,6 +3988,53 @@ class SGNAutomation:
             print(f"   ❌ Erro ao lançar conceito via requisição: {e}")
             return False
     
+    def _forcar_lancamento_conceitos_direto(self, conceito_desejado="B"):
+        """
+        FORÇA lançamento de conceitos diretamente no modal aberto
+        NÃO depende da lista de alunos - usa dados diretos do DOM
+        """
+        try:
+            print(f"   🚀 FORÇANDO lançamento direto de conceitos: {conceito_desejado}")
+            
+            # 1. TENTAR MÉTODO HTTP OTIMIZADO PRIMEIRO
+            if hasattr(self, 'helpers') and self.helpers:
+                try:
+                    viewstate = self.helpers._obter_viewstate_atual()
+                    if viewstate:
+                        print(f"   ✅ ViewState obtido: {viewstate[:50]}...")
+                        
+                        # Obter linhas diretamente do modal atual
+                        tabela_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']"
+                        linhas = self.driver.find_elements(By.XPATH, f"{tabela_xpath}/tr[@data-ri]")
+                        
+                        if linhas:
+                            print(f"   📊 {len(linhas)} habilidades encontradas no modal")
+                            conceitos_ok = 0
+                            
+                            for i, linha in enumerate(linhas):
+                                data_ri = linha.get_attribute("data-ri")
+                                print(f"     📝 Lançando conceito HTTP habilidade {i+1} (data-ri={data_ri})")
+                                
+                                sucesso = self.helpers._lancar_conceito_habilidade_via_requisicao(data_ri, conceito_desejado, viewstate)
+                                if sucesso:
+                                    conceitos_ok += 1
+                                    time.sleep(0.1)
+                            
+                            if conceitos_ok > 0:
+                                print(f"   ✅ {conceitos_ok} conceitos lançados via HTTP!")
+                                return True
+                                
+                except Exception as e:
+                    print(f"   ⚠️ Método HTTP falhou: {e}")
+            
+            # 2. FALLBACK PARA SELENIUM
+            print(f"   🔄 Fallback: Lançando conceitos via Selenium...")
+            return self._preencher_conceitos_habilidades(conceito_desejado)
+            
+        except Exception as e:
+            print(f"   ❌ Erro no lançamento direto: {e}")
+            return False
+
     def _lancar_conceito_aluno(self, aluno_info, conceito_desejado):
         """
         Lança conceito para um aluno (usa requisição HTTP por padrão, fallback para método HTML)

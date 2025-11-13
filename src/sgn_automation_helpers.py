@@ -1184,6 +1184,19 @@ class SGNAutomationHelpers:
             # Debug: mostrar início do XML recebido
             print(f"   🔍 DEBUG: XML recebido ({len(xml_content)} chars): {xml_content[:200]}...")
             
+            # VERIFICAR SE É ERRO 500 DO SERVIDOR
+            if 'redirect url="/errors/500.html"' in xml_content:
+                print("   🚨 ERRO 500 DETECTADO: Servidor SGN com problema interno!")
+                print("   ⚠️ Retornando lista vazia para forçar fallback para Selenium")
+                return []
+            
+            # VERIFICAR SE É OUTRO TIPO DE ERRO
+            if '<redirect url=' in xml_content and 'error' in xml_content.lower():
+                print("   🚨 ERRO DO SERVIDOR DETECTADO no XML!")
+                print(f"   📋 Conteúdo do erro: {xml_content}")
+                print("   ⚠️ Retornando lista vazia para forçar fallback para Selenium")
+                return []
+            
             alunos = []
             
             # Buscar por nomes dos estudantes no XML
@@ -1302,6 +1315,11 @@ class SGNAutomationHelpers:
             )
             
             if response.status_code == 200:
+                # Verificar se a resposta contém erro 500
+                if 'redirect url="/errors/500.html"' in response.text:
+                    print(f"   🚨 ERRO 500 DETECTADO ao lançar atitude: Servidor SGN com problema!")
+                    return False
+                
                 print(f"   ✅ Atitude lançada com sucesso: {valor_atitude}")
                 return True
             else:
@@ -1383,6 +1401,81 @@ class SGNAutomationHelpers:
             print(f"   ❌ Erro ao lançar conceito: {e}")
             return False
     
+    def _lancar_conceito_habilidade_via_requisicao(self, data_ri, conceito, viewstate):
+        """
+        Lança conceito de habilidade via requisição HTTP direta
+        
+        Args:
+            data_ri (str): Índice da linha da habilidade
+            conceito (str): Conceito (A, B, C, NE)
+            viewstate (str): ViewState atual da sessão
+            
+        Returns:
+            bool: True se sucesso, False caso contrário
+        """
+        print(f"   🎯 Lançando conceito de habilidade via requisição: {conceito} (data-ri={data_ri})")
+        
+        try:
+            driver = self._get_driver()
+            
+            # Obter cookies FRESCOS e URL
+            cookies = {cookie['name']: cookie['value'] for cookie in driver.get_cookies()}
+            url = driver.current_url
+            if "?" in url:
+                url = url.split("?")[0]
+            
+            print(f"   🍪 DEBUG: Usando {len(cookies)} cookies para conceito (data-ri={data_ri})")
+            
+            headers = {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Faces-Request': 'partial/ajax',
+                'User-Agent': driver.execute_script("return navigator.userAgent;")
+            }
+            
+            # Dados da requisição baseados na captura real
+            element_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito"
+            
+            post_data = {
+                'javax.faces.partial.ajax': 'true',
+                'javax.faces.source': element_id,
+                'javax.faces.partial.execute': element_id,
+                'javax.faces.partial.render': 'formAtitudes:panelAtitudes',
+                'javax.faces.behavior.event': 'valueChange',
+                'javax.faces.partial.event': 'change',
+                f'{element_id}_focus': '',
+                f'{element_id}_input': conceito,
+                'javax.faces.ViewState': viewstate
+            }
+            
+            # Fazer requisição
+            response = requests.post(url, data=post_data, headers=headers, cookies=cookies, timeout=10)
+            
+            if response.status_code == 200:
+                # Debug: mostrar resposta
+                print(f"   📋 DEBUG: Resposta HTTP ({len(response.text)} chars): {response.text[:200]}...")
+                
+                # Verificar se a resposta contém erro 500
+                if 'redirect url="/errors/500.html"' in response.text:
+                    print(f"   🚨 ERRO 500 DETECTADO ao lançar conceito: Servidor SGN com problema!")
+                    return False
+                
+                # Verificar se há outros tipos de erro
+                if '<redirect url=' in response.text and 'error' in response.text.lower():
+                    print(f"   🚨 ERRO DETECTADO na resposta: {response.text}")
+                    return False
+                
+                print(f"   ✅ Conceito de habilidade {conceito} lançado com sucesso (data-ri={data_ri})")
+                return True
+            else:
+                print(f"   ❌ Erro HTTP {response.status_code} ao lançar conceito de habilidade")
+                print(f"   📋 Resposta: {response.text[:200]}...")
+                return False
+                
+        except Exception as e:
+            print(f"   ❌ Erro ao lançar conceito de habilidade: {e}")
+            return False
+
     def _lancar_conceito_final_via_requisicao(self, data_ri, conceito, viewstate):
         """
         Lança conceito final via requisição HTTP direta
