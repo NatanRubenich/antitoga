@@ -10,6 +10,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import time
+import requests
 
 
 class SGNAutomationHelpers:
@@ -1406,34 +1407,60 @@ class SGNAutomationHelpers:
         Lança conceito de habilidade via requisição HTTP direta
         
         Args:
-            data_ri (str): Índice da linha da habilidade
-            conceito (str): Conceito (A, B, C, NE)
-            viewstate (str): ViewState atual da sessão
+            data_ri: Índice da linha da habilidade
+            conceito: Conceito a ser lançado (A, B, C, NE ou ConceitoHabilidade.X)
+            viewstate: ViewState atual da página
             
         Returns:
             bool: True se sucesso, False caso contrário
         """
-        print(f"   🎯 Lançando conceito de habilidade via requisição: {conceito} (data-ri={data_ri})")
-        
         try:
+            # Debug: mostrar tipo e valor original
+            print(f"   🔍 DEBUG: conceito recebido = '{conceito}' (tipo: {type(conceito)})")
+            
+            # Extrair apenas o valor do conceito - lidar com Enum e String
+            if hasattr(conceito, 'value'):
+                # É um Enum - usar o valor do enum
+                conceito_valor = str(conceito.value)
+                print(f"   🔍 DEBUG: Extraído valor do Enum '{conceito_valor}' de '{conceito}'")
+            elif hasattr(conceito, 'name'):
+                # É um Enum - usar o nome do enum
+                conceito_valor = str(conceito.name)
+                print(f"   🔍 DEBUG: Extraído nome do Enum '{conceito_valor}' de '{conceito}'")
+            elif isinstance(conceito, str) and '.' in conceito:
+                # É string com formato "ConceitoHabilidade.B"
+                conceito_valor = conceito.split('.')[-1]  # Pega apenas "B" de "ConceitoHabilidade.B"
+                print(f"   🔍 DEBUG: Extraído valor da string '{conceito_valor}' de '{conceito}'")
+            else:
+                # Usar valor direto convertido para string
+                conceito_valor = str(conceito)
+                print(f"   🔍 DEBUG: Usando valor direto '{conceito_valor}'")
+            
+            print(f"   🎯 Lançando conceito de habilidade via requisição: {conceito_valor} (data-ri={data_ri}) [original: {conceito}]")
+            
+            # Obter driver e cookies
             driver = self._get_driver()
+            if not driver:
+                print(f"   ❌ Driver não disponível")
+                return False
             
-            # Obter cookies FRESCOS e URL
             cookies = {cookie['name']: cookie['value'] for cookie in driver.get_cookies()}
-            url = driver.current_url
-            if "?" in url:
-                url = url.split("?")[0]
-            
             print(f"   🍪 DEBUG: Usando {len(cookies)} cookies para conceito (data-ri={data_ri})")
             
+            # URL da requisição (sem query parameters)
+            url = driver.current_url.split('?')[0]
+            print(f"   🌐 DEBUG: URL da requisição: {url}")
+            
+            # Headers baseados no exemplo REAL fornecido pelo usuário
             headers = {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
                 'Faces-Request': 'partial/ajax',
-                'User-Agent': driver.execute_script("return navigator.userAgent;")
+                'User-Agent': driver.execute_script("return navigator.userAgent;"),
+                'Referer': driver.current_url
             }
             
-            # Dados da requisição baseados na captura real
+            # Dados da requisição baseados no exemplo REAL fornecido pelo usuário
             element_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito"
             
             post_data = {
@@ -1444,12 +1471,30 @@ class SGNAutomationHelpers:
                 'javax.faces.behavior.event': 'valueChange',
                 'javax.faces.partial.event': 'change',
                 f'{element_id}_focus': '',
-                f'{element_id}_input': conceito,
+                f'{element_id}_input': conceito_valor,  # Usar apenas o valor extraído
                 'javax.faces.ViewState': viewstate
             }
             
-            # Fazer requisição
-            response = requests.post(url, data=post_data, headers=headers, cookies=cookies, timeout=10)
+            print(f"   📋 DEBUG: Dados da requisição (conceito_valor={conceito_valor}):")
+            for key, value in post_data.items():
+                if 'ViewState' in key:
+                    print(f"     {key}: {str(value)[:50]}...")
+                else:
+                    print(f"     {key}: {value}")
+            
+            # Fazer requisição usando o mesmo método das atitudes (que funciona)
+            from urllib.parse import urlencode
+            
+            session = requests.Session()
+            for name, value in cookies.items():
+                session.cookies.set(name, value)
+            
+            response = session.post(
+                url,
+                data=urlencode(post_data),
+                headers=headers,
+                timeout=15
+            )
             
             if response.status_code == 200:
                 # Debug: mostrar resposta
@@ -1465,8 +1510,20 @@ class SGNAutomationHelpers:
                     print(f"   🚨 ERRO DETECTADO na resposta: {response.text}")
                     return False
                 
-                print(f"   ✅ Conceito de habilidade {conceito} lançado com sucesso (data-ri={data_ri})")
-                return True
+                # Verificar se a resposta contém uma atualização válida do painel
+                if 'formAtitudes:panelAtitudes' in response.text and 'update id=' in response.text:
+                    # Verificar se o conceito aparece na resposta (indicando que foi aceito)
+                    if f'selected="selected"' in response.text and conceito_valor in response.text:
+                        print(f"   ✅ Conceito {conceito_valor} CONFIRMADO na resposta (data-ri={data_ri})")
+                        return True
+                    else:
+                        print(f"   ⚠️ Conceito {conceito_valor} NÃO CONFIRMADO na resposta (data-ri={data_ri})")
+                        print(f"   📋 Resposta completa: {response.text[:500]}...")
+                        return False
+                else:
+                    print(f"   ❌ Resposta não contém atualização esperada do painel")
+                    print(f"   📋 Resposta: {response.text[:300]}...")
+                    return False
             else:
                 print(f"   ❌ Erro HTTP {response.status_code} ao lançar conceito de habilidade")
                 print(f"   📋 Resposta: {response.text[:200]}...")

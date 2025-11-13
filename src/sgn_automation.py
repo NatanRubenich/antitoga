@@ -2683,7 +2683,7 @@ class SGNAutomation:
     def _preencher_conceitos_habilidades(self, opcao_conceito="B"):
         """
         Preenche todos os conceitos de habilidades com a opção escolhida
-        VERSÃO OTIMIZADA: Tenta HTTP primeiro, fallback para Selenium
+        VERSÃO OTIMIZADA COM SUPORTE A MÚLTIPLAS CAPACIDADES: Tenta HTTP primeiro, fallback para Selenium
         
         Args:
             opcao_conceito (str): Opção a ser selecionada para todos os conceitos
@@ -2692,7 +2692,10 @@ class SGNAutomation:
             bool: True se conseguiu preencher, False caso contrário
         """
         try:
-            print(f"     🚀 TENTANDO lançamento de conceitos via HTTP otimizado...")
+            print(f"     🚀 TENTANDO lançamento de conceitos via HTTP otimizado (MÚLTIPLAS CAPACIDADES)...")
+            
+            # 0. DETECTAR E EXPANDIR MÚLTIPLAS CAPACIDADES/PAINÉIS
+            capacidades_processadas = self._detectar_e_expandir_capacidades()
             
             # 1. TENTAR MÉTODO HTTP OTIMIZADO
             try:
@@ -2700,63 +2703,120 @@ class SGNAutomation:
                 if viewstate:
                     print(f"     ✅ ViewState encontrado para conceitos: {viewstate[:50]}...")
                     
-                    # Obter linhas via DOM para pegar data-ri
-                    tabela_habilidades_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']"
-                    WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.XPATH, tabela_habilidades_xpath))
-                    )
+                    # Buscar TODAS as tabelas de habilidades (múltiplas capacidades)
+                    todas_tabelas = self._obter_todas_tabelas_habilidades()
+                    total_capacidades = len(todas_tabelas)
                     
-                    linhas = self.driver.find_elements(By.XPATH, f"{tabela_habilidades_xpath}/tr[@data-ri]")
-                    total_linhas = len(linhas)
-                    print(f"     📊 Encontradas {total_linhas} linhas de conceitos de habilidades")
+                    print(f"     📊 Encontradas {total_capacidades} capacidade(s) com tabelas de habilidades")
+                    
+                    if total_capacidades == 0:
+                        print(f"     ⚠️ Nenhuma tabela de habilidades encontrada - tentando método legado...")
+                        # Fallback para método original (uma única tabela)
+                        tabela_habilidades_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']"
+                        WebDriverWait(self.driver, 10).until(
+                            EC.presence_of_element_located((By.XPATH, tabela_habilidades_xpath))
+                        )
+                        
+                        linhas = self.driver.find_elements(By.XPATH, f"{tabela_habilidades_xpath}/tr[@data-ri]")
+                        todas_tabelas = [{'xpath': tabela_habilidades_xpath, 'linhas': linhas, 'nome': 'Capacidade Principal'}]
+                        total_capacidades = 1
                     
                     conceitos_http_ok = 0
                     conceitos_falharam = 0
+                    total_linhas_processadas = 0
                     
-                    print(f"     🔍 DEBUG: Iniciando lançamento de {total_linhas} conceitos...")
-                    
-                    for i, linha_element in enumerate(linhas):
-                        try:
-                            data_ri = linha_element.get_attribute("data-ri")
-                            
-                            # Verificar se a linha já tem conceito preenchido
-                            try:
-                                select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
-                                select_element = self.driver.find_element(By.ID, select_id)
-                                valor_atual = select_element.get_attribute("value")
-                                print(f"       📋 Linha {i+1} (data-ri={data_ri}) - Valor atual: '{valor_atual}'")
-                            except:
-                                print(f"       📋 Linha {i+1} (data-ri={data_ri}) - Não conseguiu ler valor atual")
-                            
-                            # RENOVAR VIEWSTATE A CADA 3 REQUISIÇÕES PARA EVITAR EXPIRAÇÃO
-                            if i > 0 and i % 3 == 0:
-                                print(f"       🔄 Renovando ViewState após {i} conceitos...")
-                                viewstate_novo = self.helpers._obter_viewstate_atual()
-                                if viewstate_novo:
-                                    viewstate = viewstate_novo
-                                    print(f"       ✅ ViewState renovado: {viewstate[:50]}...")
-                            
-                            print(f"       📝 Lançando conceito HTTP linha {i+1} (data-ri={data_ri}) -> {opcao_conceito}")
-                            
-                            # Usar novo método HTTP
-                            sucesso = self.helpers._lancar_conceito_habilidade_via_requisicao(data_ri, opcao_conceito, viewstate)
-                            if sucesso:
-                                conceitos_http_ok += 1
-                                print(f"       ✅ SUCESSO linha {i+1}")
-                                time.sleep(0.3)  # Pausa maior para garantir processamento
-                            else:
-                                conceitos_falharam += 1
-                                print(f"       ❌ FALHA HTTP para data-ri={data_ri}")
-                                
-                        except Exception as e:
-                            conceitos_falharam += 1
-                            print(f"       ❌ ERRO HTTP linha {i+1}: {e}")
+                    # Processar cada capacidade separadamente
+                    for cap_idx, tabela_info in enumerate(todas_tabelas, 1):
+                        linhas = tabela_info['linhas']
+                        nome_capacidade = tabela_info.get('nome', f'Capacidade {cap_idx}')
+                        total_linhas_capacidade = len(linhas)
+                        
+                        print(f"     📋 Processando {nome_capacidade}: {total_linhas_capacidade} habilidades")
+                        
+                        if total_linhas_capacidade == 0:
+                            print(f"     ⚠️ {nome_capacidade} não possui habilidades - pulando...")
                             continue
+                        
+                        # Processar cada linha da tabela com sistema de retry
+                        conceitos_pendentes = list(enumerate(tabela_info['linhas']))  # Lista de (índice, linha) pendentes
+                        max_tentativas = 3
+                        
+                        for tentativa in range(max_tentativas):
+                            if not conceitos_pendentes:
+                                break
+                                
+                            print(f"       🔄 Tentativa {tentativa + 1}/{max_tentativas}: {len(conceitos_pendentes)} conceitos pendentes")
+                            conceitos_processados_nesta_tentativa = []
+                            
+                            for i, linha in conceitos_pendentes:
+                                try:
+                                    data_ri = linha.get_attribute("data-ri")
+                                    
+                                    # Verificar valor atual do conceito antes de lançar
+                                    try:
+                                        select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito"
+                                        select_element = self.driver.find_element(By.ID, select_id)
+                                        valor_atual = select_element.get_attribute("value")
+                                        
+                                        # Se já tem o valor correto, pular
+                                        conceito_esperado = opcao_conceito.split('.')[-1] if '.' in opcao_conceito else opcao_conceito
+                                        if valor_atual == conceito_esperado:
+                                            print(f"       ✓ {nome_capacidade} - Linha {i+1} (data-ri={data_ri}) - Já tem '{valor_atual}'")
+                                            conceitos_processados_nesta_tentativa.append((i, linha))
+                                            conceitos_http_ok += 1
+                                            continue
+                                            
+                                        print(f"       📋 {nome_capacidade} - Linha {i+1} (data-ri={data_ri}) - Valor atual: '{valor_atual}' -> '{conceito_esperado}'")
+                                    except:
+                                        print(f"       📋 {nome_capacidade} - Linha {i+1} (data-ri={data_ri}) - Não conseguiu ler valor atual")
+                                    
+                                    # RENOVAR VIEWSTATE A CADA 3 REQUISIÇÕES PARA EVITAR EXPIRAÇÃO
+                                    if (conceitos_http_ok + conceitos_falharam) > 0 and (conceitos_http_ok + conceitos_falharam) % 3 == 0:
+                                        print(f"       🔄 Renovando ViewState após {conceitos_http_ok + conceitos_falharam} conceitos...")
+                                        viewstate_novo = self.helpers._obter_viewstate_atual()
+                                        if viewstate_novo:
+                                            viewstate = viewstate_novo
+                                            print(f"       ✅ ViewState renovado: {viewstate[:50]}...")
+                                    
+                                    print(f"       📝 {nome_capacidade} - Lançando conceito HTTP linha {i+1} (data-ri={data_ri}) -> {opcao_conceito}")
+                                    
+                                    # Usar novo método HTTP
+                                    sucesso = self.helpers._lancar_conceito_habilidade_via_requisicao(data_ri, opcao_conceito, viewstate)
+                                    if sucesso:
+                                        conceitos_processados_nesta_tentativa.append((i, linha))
+                                        conceitos_http_ok += 1
+                                        print(f"       ✅ SUCESSO {nome_capacidade} linha {i+1}")
+                                        time.sleep(0.3)  # Pausa maior para garantir processamento
+                                    else:
+                                        conceitos_falharam += 1
+                                        print(f"       ❌ FALHA HTTP {nome_capacidade} para data-ri={data_ri}")
+                                        
+                                except Exception as e:
+                                    conceitos_falharam += 1
+                                    print(f"       ❌ ERRO HTTP {nome_capacidade} linha {i+1}: {e}")
+                                    continue
+                            
+                            # Remover conceitos processados com sucesso da lista de pendentes
+                            for item in conceitos_processados_nesta_tentativa:
+                                if item in conceitos_pendentes:
+                                    conceitos_pendentes.remove(item)
+                            
+                            # Se ainda há pendentes, aguardar antes da próxima tentativa
+                            if conceitos_pendentes and tentativa < max_tentativas - 1:
+                                print(f"       ⏳ Aguardando 2s antes da próxima tentativa...")
+                                time.sleep(2)
+                        
+                        # Relatório final desta capacidade
+                        conceitos_sucesso_capacidade = len(tabela_info['linhas']) - len(conceitos_pendentes)
+                        print(f"       📊 {nome_capacidade}: {conceitos_sucesso_capacidade}/{len(tabela_info['linhas'])} conceitos lançados")
+                        
+                        total_linhas_processadas += len(tabela_info['linhas'])
                     
-                    print(f"     📊 RESULTADO HTTP: {conceitos_http_ok} sucessos, {conceitos_falharam} falhas de {total_linhas} total")
+                    # Relatório final HTTP
+                    print(f"     📊 RESULTADO HTTP FINAL: {conceitos_http_ok} sucessos, {conceitos_falharam} falhas de {total_linhas_processadas} total em {total_capacidades} capacidade(s)")
                     
                     if conceitos_http_ok > 0:
-                        print(f"     ✅ {conceitos_http_ok}/{total_linhas} conceitos lançados via HTTP")
+                        print(f"     ✅ {conceitos_http_ok}/{total_linhas_processadas} conceitos lançados via HTTP em múltiplas capacidades")
                         if conceitos_falharam > 0:
                             print(f"     ⚠️ {conceitos_falharam} conceitos falharam - tentando fallback Selenium para estes")
                         return True
@@ -2766,33 +2826,50 @@ class SGNAutomation:
             except Exception as e:
                 print(f"     ⚠️ Método HTTP falhou: {e}")
             
-            # 2. FALLBACK PARA MÉTODO SELENIUM ORIGINAL
-            print(f"     🔄 Fallback para método Selenium...")
+            # 2. FALLBACK PARA MÉTODO SELENIUM ORIGINAL COM MÚLTIPLAS CAPACIDADES
+            print(f"     🔄 Fallback para método Selenium (MÚLTIPLAS CAPACIDADES)...")
             print(f"     📝 Preenchendo conceitos de habilidades com '{opcao_conceito}'...")
             
-            # XPath base da tabela de conceitos de habilidades (ui-datatable-data)
-            tabela_habilidades_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']"
+            # Buscar TODAS as tabelas de habilidades (múltiplas capacidades)
+            todas_tabelas_selenium = self._obter_todas_tabelas_habilidades()
             
-            # Aguardar tabela carregar após expansão
-            print(f"     🔍 Procurando tabela de conceitos de habilidades...")
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, tabela_habilidades_xpath))
-            )
-            print(f"     ✅ Tabela de conceitos encontrada")
-            
-            # Processar cada linha de conceito de habilidade usando data-ri
-            habilidades_preenchidas = 0
-            
-            # Obter todas as linhas da tabela
-            try:
-                linhas = self.driver.find_elements(By.XPATH, f"{tabela_habilidades_xpath}/tr[@data-ri]")
-                total_linhas = len(linhas)
-                print(f"     📊 Encontradas {total_linhas} linhas de conceitos de habilidades")
+            if not todas_tabelas_selenium:
+                print(f"     ⚠️ Nenhuma tabela encontrada - tentando método legado...")
+                # Fallback para método original (uma única tabela)
+                tabela_habilidades_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']"
                 
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, tabela_habilidades_xpath))
+                    )
+                    linhas = self.driver.find_elements(By.XPATH, f"{tabela_habilidades_xpath}/tr[@data-ri]")
+                    todas_tabelas_selenium = [{'xpath': tabela_habilidades_xpath, 'linhas': linhas, 'nome': 'Capacidade Principal'}]
+                except:
+                    print(f"     ❌ Não foi possível encontrar nenhuma tabela de habilidades")
+                    return False
+            
+            # Processar cada capacidade separadamente
+            habilidades_preenchidas = 0
+            total_capacidades_selenium = len(todas_tabelas_selenium)
+            
+            print(f"     📊 Processando {total_capacidades_selenium} capacidade(s) via Selenium")
+            
+            for cap_idx, tabela_info in enumerate(todas_tabelas_selenium, 1):
+                linhas = tabela_info['linhas']
+                nome_capacidade = tabela_info.get('nome', f'Capacidade {cap_idx}')
+                total_linhas_capacidade = len(linhas)
+                
+                print(f"     📋 Selenium - Processando {nome_capacidade}: {total_linhas_capacidade} habilidades")
+                
+                if total_linhas_capacidade == 0:
+                    print(f"     ⚠️ {nome_capacidade} não possui habilidades - pulando...")
+                    continue
+                
+                # Processar cada linha desta capacidade
                 for i, linha_element in enumerate(linhas):
                     try:
                         data_ri = linha_element.get_attribute("data-ri")
-                        print(f"       📝 Processando linha {i+1} (data-ri={data_ri})")
+                        print(f"       📝 {nome_capacidade} - Selenium linha {i+1} (data-ri={data_ri})")
                         
                         # Procurar select nativo diretamente usando o ID específico
                         select_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito_input"
@@ -2807,7 +2884,7 @@ class SGNAutomation:
                             
                             # Verificar valor atual usando JavaScript (select está oculto)
                             valor_atual = self.driver.execute_script("return arguments[0].value;", select_element)
-                            print(f"       📋 Valor atual: {valor_atual}")
+                            print(f"       📋 {nome_capacidade} - Valor atual: {valor_atual}")
                             
                             # Mapear opção para o valor exato esperado no select
                             opcoes_mapeadas = {
@@ -2840,26 +2917,22 @@ class SGNAutomation:
                                     arguments[0].dispatchEvent(event);
                                 """, select_element)
                                 
-                                print(f"       ✓ Habilidade {i+1}: '{valor_para_preencher}' selecionado (JavaScript)")
+                                print(f"       ✓ {nome_capacidade} - Habilidade {i+1}: '{valor_para_preencher}' selecionado (JavaScript)")
                                 habilidades_preenchidas += 1
                                 time.sleep(0.5)  # Aguardar processamento
                             else:
-                                print(f"       ✓ Habilidade {i+1}: Já estava '{valor_para_preencher}'")
+                                print(f"       ✓ {nome_capacidade} - Habilidade {i+1}: Já estava '{valor_para_preencher}'")
                                 habilidades_preenchidas += 1
                             
                         except Exception as select_error:
-                            print(f"       ❌ Erro ao selecionar '{opcao_conceito}' na linha {i+1}: {str(select_error)}")
+                            print(f"       ❌ {nome_capacidade} - Erro ao selecionar '{opcao_conceito}' na linha {i+1}: {str(select_error)}")
                     
                     except Exception as linha_error:
-                        print(f"       ❌ Erro ao processar linha {i+1}: {str(linha_error)}")
+                        print(f"       ❌ {nome_capacidade} - Erro ao processar linha {i+1}: {str(linha_error)}")
                         continue
-                        
-            except Exception as tabela_error:
-                print(f"     ❌ Erro ao processar tabela de habilidades: {str(tabela_error)}")
             
-            print(f"     ✅ {habilidades_preenchidas} conceitos de habilidades preenchidos")
+            print(f"     ✅ SELENIUM FINAL: {habilidades_preenchidas} conceitos de habilidades preenchidos em {total_capacidades_selenium} capacidade(s)")
             return habilidades_preenchidas > 0
-            return False
             
         except Exception as e:
             print(f"     ❌ Erro ao preencher conceitos de habilidades: {e}")
@@ -5478,3 +5551,270 @@ class SGNAutomation:
             import traceback
             traceback.print_exc()
             return False, error_msg
+
+    def _detectar_e_expandir_capacidades(self):
+        """
+        Detecta e expande múltiplas capacidades/painéis na interface
+        
+        Returns:
+            int: Número de capacidades processadas
+        """
+        try:
+            print(f"     🔍 Detectando múltiplas capacidades/painéis...")
+            
+            capacidades_expandidas = 0
+            
+            # 1. Procurar por painéis/accordions que podem conter capacidades
+            accordion_selectors = [
+                "//div[contains(@class, 'ui-accordion-header')]",
+                "//div[contains(@id, 'capacidade') or contains(@class, 'capacidade')]",
+                "//div[contains(@id, 'painel') or contains(@class, 'painel')]",
+                "//h3[contains(text(), 'Capacidade') or contains(text(), 'C1') or contains(text(), 'C2') or contains(text(), 'C3')]",
+                "//div[contains(@class, 'ui-fieldset-legend')]"
+            ]
+            
+            for selector in accordion_selectors:
+                try:
+                    elementos = self.driver.find_elements(By.XPATH, selector)
+                    print(f"     📋 Encontrados {len(elementos)} elementos com seletor: {selector}")
+                    
+                    for elemento in elementos:
+                        try:
+                            # Verificar se o elemento está visível e pode ser clicado
+                            if elemento.is_displayed():
+                                texto = elemento.text.strip()
+                                
+                                # Verificar se parece ser um painel de capacidade
+                                if any(palavra in texto.lower() for palavra in ['capacidade', 'c1', 'c2', 'c3', 'habilidade']):
+                                    print(f"     📂 Possível capacidade encontrada: '{texto[:50]}...'")
+                                    
+                                    # Verificar se está expandido
+                                    class_attr = elemento.get_attribute("class") or ""
+                                    aria_expanded = elemento.get_attribute("aria-expanded")
+                                    
+                                    if ("ui-state-active" not in class_attr and 
+                                        aria_expanded != "true"):
+                                        
+                                        print(f"     🔄 Expandindo painel: {texto[:30]}...")
+                                        
+                                        # Tentar clicar para expandir
+                                        self.driver.execute_script("arguments[0].scrollIntoView(true);", elemento)
+                                        time.sleep(0.3)
+                                        elemento.click()
+                                        time.sleep(1)  # Aguardar expansão
+                                        
+                                        capacidades_expandidas += 1
+                                        print(f"     ✅ Painel expandido: {texto[:30]}")
+                                    else:
+                                        print(f"     ✓ Painel já expandido: {texto[:30]}")
+                                        capacidades_expandidas += 1
+                                        
+                        except Exception as e:
+                            print(f"     ⚠️ Erro ao processar elemento: {str(e)[:50]}")
+                            continue
+                            
+                except Exception as e:
+                    print(f"     ⚠️ Erro com seletor {selector}: {str(e)[:50]}")
+                    continue
+            
+            print(f"     📊 Total de capacidades/painéis processados: {capacidades_expandidas}")
+            return capacidades_expandidas
+            
+        except Exception as e:
+            print(f"     ❌ Erro ao detectar capacidades: {str(e)}")
+            return 0
+
+    def _obter_todas_tabelas_habilidades(self):
+        """
+        Obtém todas as tabelas de habilidades disponíveis (múltiplas capacidades)
+        MÉTODO OTIMIZADO: Usa descoberta rápida como nas atitudes
+        
+        Returns:
+            list: Lista de dicionários com informações das tabelas
+        """
+        try:
+            print(f"     🔍 Descobrindo número real de conceitos/habilidades...")
+            
+            # MÉTODO OTIMIZADO: Buscar diretamente pelos selects de conceito (como nas atitudes)
+            try:
+                conceitos_elements = self.driver.find_elements(By.CSS_SELECTOR, "select[id*='notaConceito']")
+                max_conceitos = len(conceitos_elements)
+                print(f"     📊 Encontrados {max_conceitos} elementos de conceito na página")
+                
+                if max_conceitos == 0:
+                    # Fallback: buscar por método tradicional se não encontrar conceitos
+                    print(f"     ⚠️ Nenhum conceito encontrado, tentando método tradicional...")
+                    return self._obter_tabelas_habilidades_tradicional()
+                    
+            except Exception as e:
+                print(f"     ⚠️ Erro ao descobrir conceitos, usando método tradicional: {e}")
+                return self._obter_tabelas_habilidades_tradicional()
+            
+            # Criar estrutura otimizada baseada nos conceitos encontrados
+            todas_tabelas = []
+            
+            # Buscar a tabela principal de habilidades
+            try:
+                tabela_habilidades_xpath = "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']"
+                tbody_element = self.driver.find_element(By.XPATH, tabela_habilidades_xpath)
+                
+                if tbody_element.is_displayed():
+                    # Criar linhas virtuais baseadas nos conceitos encontrados
+                    linhas_virtuais = []
+                    
+                    for i in range(max_conceitos):
+                        # Criar objeto linha virtual com data-ri (capturar i por valor)
+                        linha_virtual = type('LinhaVirtual', (), {
+                            'get_attribute': lambda self, attr, data_ri=str(i): data_ri if attr == 'data-ri' else None
+                        })()
+                        linhas_virtuais.append(linha_virtual)
+                    
+                    tabela_info = {
+                        'id': 'formAtitudes:panelAtitudes:dataTableHabilidades_data',
+                        'xpath': tabela_habilidades_xpath,
+                        'linhas': linhas_virtuais,
+                        'nome': f'Conceitos de Habilidades (Total: {max_conceitos})',
+                        'elemento': tbody_element
+                    }
+                    
+                    todas_tabelas.append(tabela_info)
+                    print(f"     ✅ Tabela otimizada criada: {max_conceitos} conceitos identificados rapidamente")
+                    
+            except Exception as e:
+                print(f"     ⚠️ Erro ao criar tabela otimizada: {e}")
+                return self._obter_tabelas_habilidades_tradicional()
+            
+            return todas_tabelas
+            
+        except Exception as e:
+            print(f"     ❌ Erro ao obter tabelas de habilidades: {str(e)}")
+            return []
+
+    def _obter_tabelas_habilidades_tradicional(self):
+        """
+        Método tradicional (mais lento) para buscar tabelas de habilidades
+        """
+        try:
+            print(f"     🔍 Buscando tabelas pelo método tradicional...")
+            
+            todas_tabelas = []
+            
+            # Diferentes padrões de seletores para tabelas de habilidades
+            seletores_tabelas = [
+                "//tbody[@id='formAtitudes:panelAtitudes:dataTableHabilidades_data']",
+                "//tbody[contains(@id, 'dataTableHabilidades') and contains(@id, '_data')]",
+                "//tbody[contains(@id, 'tabelaHabilidade') and contains(@id, '_data')]",
+                "//tbody[contains(@id, 'habilidades_data')]",
+                "//table[contains(@id, 'habilidades')]//tbody",
+                "//div[contains(@class, 'ui-datatable')]//tbody[contains(@id, '_data')]"
+            ]
+            
+            tabelas_encontradas = set()  # Para evitar duplicatas
+            
+            for i, seletor in enumerate(seletores_tabelas):
+                try:
+                    elementos = self.driver.find_elements(By.XPATH, seletor)
+                    print(f"     📋 Seletor {i+1}: encontradas {len(elementos)} tabela(s)")
+                    
+                    for j, tbody in enumerate(elementos):
+                        try:
+                            # Verificar se a tabela está visível e tem linhas
+                            if tbody.is_displayed():
+                                linhas = tbody.find_elements(By.XPATH, ".//tr[@data-ri]")
+                                
+                                if len(linhas) > 0:
+                                    # Usar ID como chave única para evitar duplicatas
+                                    tbody_id = tbody.get_attribute("id") or f"tabela_{i}_{j}"
+                                    
+                                    if tbody_id not in tabelas_encontradas:
+                                        tabelas_encontradas.add(tbody_id)
+                                        
+                                        # Tentar identificar o nome da capacidade
+                                        nome_capacidade = self._identificar_nome_capacidade(tbody)
+                                        
+                                        tabela_info = {
+                                            'id': tbody_id,
+                                            'xpath': seletor,
+                                            'linhas': linhas,
+                                            'nome': nome_capacidade,
+                                            'elemento': tbody
+                                        }
+                                        
+                                        todas_tabelas.append(tabela_info)
+                                        print(f"     ✅ Tabela adicionada: {nome_capacidade} ({len(linhas)} habilidades)")
+                                    else:
+                                        print(f"     ⚠️ Tabela duplicada ignorada: {tbody_id}")
+                                else:
+                                    print(f"     ⚠️ Tabela sem habilidades: {tbody.get_attribute('id')}")
+                            else:
+                                print(f"     ⚠️ Tabela não visível: {tbody.get_attribute('id')}")
+                                
+                        except Exception as e:
+                            print(f"     ⚠️ Erro ao processar tabela {j}: {str(e)[:50]}")
+                            continue
+                            
+                except Exception as e:
+                    print(f"     ⚠️ Erro com seletor {i+1}: {str(e)[:50]}")
+                    continue
+            
+            print(f"     📊 TOTAL DE TABELAS ENCONTRADAS: {len(todas_tabelas)}")
+            
+            # Log detalhado das tabelas encontradas
+            for i, tabela in enumerate(todas_tabelas, 1):
+                print(f"     📋 Tabela {i}: {tabela['nome']} - {len(tabela['linhas'])} habilidades")
+            
+            return todas_tabelas
+            
+        except Exception as e:
+            print(f"     ❌ Erro ao obter tabelas de habilidades (tradicional): {str(e)}")
+            return []
+
+    def _identificar_nome_capacidade(self, tbody_element):
+        """
+        Tenta identificar o nome da capacidade baseado no contexto da tabela
+        
+        Args:
+            tbody_element: Elemento tbody da tabela
+            
+        Returns:
+            str: Nome identificado da capacidade
+        """
+        try:
+            # Tentar encontrar um título ou cabeçalho próximo
+            parent = tbody_element
+            
+            # Subir na hierarquia procurando por títulos
+            for _ in range(5):  # Máximo 5 níveis acima
+                try:
+                    parent = parent.find_element(By.XPATH, "..")
+                    
+                    # Procurar por elementos de título próximos
+                    titulos_xpath = [
+                        ".//h1 | .//h2 | .//h3 | .//h4",
+                        ".//legend",
+                        ".//span[contains(@class, 'ui-fieldset-legend')]",
+                        ".//div[contains(@class, 'ui-accordion-header')]",
+                        ".//label[contains(text(), 'Capacidade') or contains(text(), 'C1') or contains(text(), 'C2')]"
+                    ]
+                    
+                    for xpath in titulos_xpath:
+                        elementos = parent.find_elements(By.XPATH, xpath)
+                        for elemento in elementos:
+                            texto = elemento.text.strip()
+                            if texto and len(texto) > 2:
+                                # Verificar se parece ser um nome de capacidade
+                                if any(palavra in texto.lower() for palavra in ['capacidade', 'c1', 'c2', 'c3', 'habilidade']):
+                                    return texto[:50]  # Limitar tamanho
+                                    
+                except:
+                    continue
+                    
+            # Se não encontrou título, usar ID da tabela
+            tbody_id = tbody_element.get_attribute("id")
+            if tbody_id:
+                return f"Capacidade ({tbody_id.split('_')[-2] if '_' in tbody_id else 'Principal'})"
+            
+            return "Capacidade Não Identificada"
+            
+        except Exception as e:
+            return f"Capacidade (Erro: {str(e)[:20]})"
