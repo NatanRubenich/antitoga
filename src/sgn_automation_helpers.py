@@ -1863,48 +1863,61 @@ class SGNAutomationHelpers:
         
         return False
 
-    def _lancar_conceitos_habilidades_paralelo(self, conceitos_pendentes, conceito_valor, viewstate, timeout=3):
+    def _lancar_conceitos_habilidades_paralelo(self, conceitos_pendentes, conceito_valor, viewstate, timeout=10):
         """
-        Lança conceitos de habilidades em paralelo usando threads
+        Lança conceitos de habilidades usando o mesmo padrão otimizado das atitudes
+        
+        Melhorias aplicadas (igual às atitudes):
+        - Cache de cookies/headers antes do loop
+        - Retry com backoff exponencial por requisição
+        - Detecção e renovação automática de sessão
+        - Timeout aumentado para 10s (servidor SGN é lento)
         
         Args:
             conceitos_pendentes (list): Lista de data-ri dos conceitos pendentes
-            conceito_valor (str): Valor do conceito
+            conceito_valor (str): Valor do conceito (A, B, C, NE)
             viewstate (str): ViewState atual
-            timeout (int): Timeout por requisição
+            timeout (int): Timeout por requisição (padrão: 10s)
             
         Returns:
             tuple: (sucessos, falhas)
         """
         sucessos = 0
         falhas = 0
+        total = len(conceitos_pendentes)
         
-        def processar_conceito(data_ri):
+        if total == 0:
+            return 0, 0
+        
+        print(f"      📝 Lançando {total} conceitos com valor '{conceito_valor}'...")
+        
+        # OTIMIZAÇÃO 1: Cache de cookies/headers antes do loop (igual às atitudes)
+        cookies, headers, url = self._get_cached_request_data()
+        
+        for idx, data_ri in enumerate(conceitos_pendentes):
             try:
-                sucesso = self._lancar_conceito_habilidade_via_requisicao(data_ri, conceito_valor, viewstate)
-                return (data_ri, sucesso)
-            except Exception:
-                return (data_ri, False)
-        
-        # Usar ThreadPoolExecutor para paralelizar (máximo 3 threads para conceitos - evitar erro 500)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            # Submeter todas as tarefas
-            futures = [executor.submit(processar_conceito, data_ri) for data_ri in conceitos_pendentes]
-            
-            # Coletar resultados
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    data_ri, sucesso = future.result(timeout=timeout + 3)  # Timeout maior para conceitos
-                    if sucesso:
-                        sucessos += 1
-                        print(f"   ✅ Conceito {data_ri} preenchido: {conceito_valor}")
-                    else:
-                        falhas += 1
-                        print(f"   ❌ Falha no conceito {data_ri}")
-                except Exception as e:
+                sucesso = self._lancar_conceito_habilidade_via_requisicao_otimizada(
+                    data_ri, conceito_valor, viewstate, cookies, headers, url, timeout
+                )
+                if sucesso:
+                    sucessos += 1
+                else:
                     falhas += 1
-                    print(f"   ❌ Erro na thread do conceito: {e}")
+                    
+                # Se muitas falhas consecutivas (>3), tentar renovar sessão
+                if falhas > 3 and (falhas / (idx + 1)) > 0.5:
+                    print(f"      ⚠️ Muitas falhas ({falhas}/{idx+1}), renovando sessão...")
+                    if self._tentar_renovar_sessao():
+                        cookies, headers, url = self._get_cached_request_data(force_refresh=True)
+                        viewstate_novo = self._obter_viewstate_atual()
+                        if viewstate_novo:
+                            viewstate = viewstate_novo
+                            
+            except Exception as e:
+                falhas += 1
+                print(f"      ❌ Erro no conceito {data_ri}: {str(e)[:30]}")
         
+        print(f"      ✅ Conceitos: {sucessos}/{total} OK, {falhas} falhas")
         return sucessos, falhas
     
     def _lancar_conceito_via_requisicao(self, data_ri, avaliacao_id, conceito, viewstate):
@@ -1980,139 +1993,140 @@ class SGNAutomationHelpers:
     
     def _lancar_conceito_habilidade_via_requisicao(self, data_ri, conceito, viewstate):
         """
-        Lança conceito de habilidade via requisição HTTP direta
+        Lança conceito de habilidade via requisição HTTP direta (versão simples)
+        
+        Para uso quando não há cache disponível. Para melhor performance,
+        use _lancar_conceito_habilidade_via_requisicao_otimizada().
+        """
+        # Obter dados frescos
+        cookies, headers, url = self._get_cached_request_data()
+        return self._lancar_conceito_habilidade_via_requisicao_otimizada(
+            data_ri, conceito, viewstate, cookies, headers, url, timeout=10
+        )
+    
+    def _lancar_conceito_habilidade_via_requisicao_otimizada(self, data_ri, conceito, viewstate, cookies, headers, url, timeout=10):
+        """
+        Versão otimizada que usa dados em cache (thread-safe) com retry e rate limiting
+        
+        Baseado no payload real capturado do SGN e no padrão das atitudes.
+        
+        Melhorias:
+        - Usa cache de cookies/headers (não acessa Selenium a cada requisição)
+        - Retry com backoff exponencial (2 tentativas)
+        - Rate limiting para evitar erro 500
+        - Timeout aumentado para 10s (servidor SGN é lento)
+        - Detecção de sessão expirada
         
         Args:
-            data_ri: Índice da linha da habilidade
-            conceito: Conceito a ser lançado (A, B, C, NE ou ConceitoHabilidade.X)
+            data_ri: Índice da linha da habilidade (0, 1, 2, 3...)
+            conceito: Conceito a ser lançado (A, B, C, NE)
             viewstate: ViewState atual da página
+            cookies: Cookies em cache
+            headers: Headers em cache
+            url: URL em cache
+            timeout: Timeout em segundos (padrão: 10s)
             
         Returns:
             bool: True se sucesso, False caso contrário
         """
-        try:
-            # Debug: mostrar tipo e valor original
-            print(f"   🔍 DEBUG: conceito recebido = '{conceito}' (tipo: {type(conceito)})")
-            
-            # Extrair apenas o valor do conceito - lidar com Enum e String
-            if hasattr(conceito, 'value'):
-                # É um Enum - usar o valor do enum
-                conceito_valor = str(conceito.value)
-                print(f"   🔍 DEBUG: Extraído valor do Enum '{conceito_valor}' de '{conceito}'")
-            elif hasattr(conceito, 'name'):
-                # É um Enum - usar o nome do enum
-                conceito_valor = str(conceito.name)
-                print(f"   🔍 DEBUG: Extraído nome do Enum '{conceito_valor}' de '{conceito}'")
-            elif isinstance(conceito, str) and '.' in conceito:
-                # É string com formato "ConceitoHabilidade.B"
-                conceito_valor = conceito.split('.')[-1]  # Pega apenas "B" de "ConceitoHabilidade.B"
-                print(f"   🔍 DEBUG: Extraído valor da string '{conceito_valor}' de '{conceito}'")
-            else:
-                # Usar valor direto convertido para string
-                conceito_valor = str(conceito)
-                print(f"   🔍 DEBUG: Usando valor direto '{conceito_valor}'")
-            
-            print(f"   🎯 Lançando conceito de habilidade via requisição: {conceito_valor} (data-ri={data_ri}) [original: {conceito}]")
-            
-            # Obter driver e cookies
-            driver = self._get_driver()
-            if not driver:
-                print(f"   ❌ Driver não disponível")
-                return False
-            
-            cookies = {cookie['name']: cookie['value'] for cookie in driver.get_cookies()}
-            print(f"   🍪 DEBUG: Usando {len(cookies)} cookies para conceito (data-ri={data_ri})")
-            
-            # URL da requisição (sem query parameters)
-            url = driver.current_url.split('?')[0]
-            print(f"   🌐 DEBUG: URL da requisição: {url}")
-            
-            # Headers baseados no exemplo REAL fornecido pelo usuário
-            headers = {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Faces-Request': 'partial/ajax',
-                'User-Agent': driver.execute_script("return navigator.userAgent;"),
-                'Referer': driver.current_url
-            }
-            
-            # Dados da requisição baseados no exemplo REAL fornecido pelo usuário
-            element_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito"
-            
-            post_data = {
-                'javax.faces.partial.ajax': 'true',
-                'javax.faces.source': element_id,
-                'javax.faces.partial.execute': element_id,
-                'javax.faces.partial.render': 'formAtitudes:panelAtitudes',
-                'javax.faces.behavior.event': 'valueChange',
-                'javax.faces.partial.event': 'change',
-                f'{element_id}_focus': '',
-                f'{element_id}_input': conceito_valor,  # Usar apenas o valor extraído
-                'javax.faces.ViewState': viewstate
-            }
-            
-            print(f"   📋 DEBUG: Dados da requisição (conceito_valor={conceito_valor}):")
-            for key, value in post_data.items():
-                if 'ViewState' in key:
-                    print(f"     {key}: {str(value)[:50]}...")
+        max_retries = 2
+        base_delay = 1.0
+        
+        for attempt in range(max_retries + 1):
+            try:
+                # Rate limiting para evitar erro 500
+                self._rate_limit_request()
+                
+                # Extrair apenas o valor do conceito - lidar com Enum e String
+                if hasattr(conceito, 'value'):
+                    conceito_valor = str(conceito.value)
+                elif hasattr(conceito, 'name'):
+                    conceito_valor = str(conceito.name)
+                elif isinstance(conceito, str) and '.' in conceito:
+                    conceito_valor = conceito.split('.')[-1]
                 else:
-                    print(f"     {key}: {value}")
-            
-            # Fazer requisição usando o mesmo método das atitudes (que funciona)
-            from urllib.parse import urlencode
-            
-            session = requests.Session()
-            for name, value in cookies.items():
-                session.cookies.set(name, value)
-            
-            response = session.post(
-                url,
-                data=urlencode(post_data),
-                headers=headers,
-                timeout=15
-            )
-            
-            if response.status_code == 200:
-                # Debug: mostrar resposta
-                print(f"   📋 DEBUG: Resposta HTTP ({len(response.text)} chars): {response.text[:200]}...")
+                    conceito_valor = str(conceito)
                 
-                # Verificar se a sessão expirou
-                if self._detectar_sessao_expirada(response.text):
-                    print(f"   🚨 Sessão expirada detectada no conceito data-ri={data_ri}")
-                    return False
+                # ID do elemento baseado no payload real:
+                # formAtitudes:panelAtitudes:dataTableHabilidades:3:notaConceito
+                element_id = f"formAtitudes:panelAtitudes:dataTableHabilidades:{data_ri}:notaConceito"
                 
-                # Verificar se a resposta contém erro 500
-                if 'redirect url="/errors/500.html"' in response.text:
-                    print(f"   🚨 ERRO 500 DETECTADO ao lançar conceito: Servidor SGN com problema!")
-                    return False
+                # Dados da requisição - EXATAMENTE como no payload capturado
+                post_data = {
+                    'javax.faces.partial.ajax': 'true',
+                    'javax.faces.source': element_id,
+                    'javax.faces.partial.execute': element_id,
+                    'javax.faces.partial.render': 'formAtitudes:panelAtitudes',
+                    'javax.faces.behavior.event': 'valueChange',
+                    'javax.faces.partial.event': 'change',
+                    f'{element_id}_focus': '',
+                    f'{element_id}_input': conceito_valor,
+                    'javax.faces.ViewState': viewstate
+                }
                 
-                # Verificar se há outros tipos de erro
-                if '<redirect url=' in response.text and 'error' in response.text.lower():
-                    print(f"   🚨 ERRO DETECTADO na resposta: {response.text}")
-                    return False
+                from urllib.parse import urlencode
                 
-                # Verificar se a resposta contém uma atualização válida do painel
-                if 'formAtitudes:panelAtitudes' in response.text and 'update id=' in response.text:
-                    # Verificar se o conceito aparece na resposta (indicando que foi aceito)
-                    if f'selected="selected"' in response.text and conceito_valor in response.text:
-                        print(f"   ✅ Conceito {conceito_valor} CONFIRMADO na resposta (data-ri={data_ri})")
-                        return True
-                    else:
-                        print(f"   ⚠️ Conceito {conceito_valor} NÃO CONFIRMADO na resposta (data-ri={data_ri})")
-                        print(f"   📋 Resposta completa: {response.text[:500]}...")
+                session = requests.Session()
+                for name, value in cookies.items():
+                    session.cookies.set(name, value)
+                
+                response = session.post(
+                    url,
+                    data=urlencode(post_data),
+                    headers=headers,
+                    timeout=timeout
+                )
+                
+                if response.status_code == 200:
+                    # Verificar se a sessão expirou
+                    if self._detectar_sessao_expirada(response.text):
+                        if attempt < max_retries:
+                            print(f"      🚨 Sessão expirada (data-ri={data_ri}), tentando renovar...")
+                            if self._tentar_renovar_sessao():
+                                cookies, headers, url = self._get_cached_request_data(force_refresh=True)
+                                delay = base_delay * (2 ** attempt)
+                                time.sleep(delay)
+                                continue
                         return False
-                else:
-                    print(f"   ❌ Resposta não contém atualização esperada do painel")
-                    print(f"   📋 Resposta: {response.text[:300]}...")
+                    
+                    # Verificar se a resposta contém erro 500
+                    if 'redirect url="/errors/500.html"' in response.text:
+                        if attempt < max_retries:
+                            delay = base_delay * (2 ** attempt)
+                            time.sleep(delay)
+                            continue
+                        return False
+                    
+                    # Verificar se a resposta contém partial-response válida
+                    if '<partial-response>' in response.text and '<update' in response.text:
+                        return True
+                    
+                    # Se contém o painel, considerar sucesso
+                    if 'formAtitudes:panelAtitudes' in response.text:
+                        return True
+                    
+                    # Resposta inesperada - tentar novamente
+                    if attempt < max_retries:
+                        delay = base_delay * (2 ** attempt)
+                        time.sleep(delay)
+                        continue
                     return False
-            else:
-                print(f"   ❌ Erro HTTP {response.status_code} ao lançar conceito de habilidade")
-                print(f"   📋 Resposta: {response.text[:200]}...")
+                else:
+                    # Erro HTTP - tentar novamente
+                    if attempt < max_retries:
+                        delay = base_delay * (2 ** attempt)
+                        time.sleep(delay)
+                        continue
+                    return False
+                    
+            except Exception as e:
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    time.sleep(delay)
+                    continue
                 return False
-                
-        except Exception as e:
-            print(f"   ❌ Erro ao lançar conceito de habilidade: {e}")
-            return False
+        
+        return False
 
     def _lancar_conceito_final_via_requisicao(self, data_ri, conceito, viewstate):
         """
