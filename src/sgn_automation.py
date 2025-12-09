@@ -1614,14 +1614,14 @@ class SGNAutomation:
             
             # 2. OBTER LISTA DE ALUNOS COM MÉTODO OTIMIZADO
             print("\n   📋 Coletando lista de alunos...")
-            alunos = self._obter_lista_alunos()
+            alunos = self._obter_lista_alunos(trimestre=trimestre_referencia)
             total_alunos = len(alunos)
             
             # Fallback para método original se o novo falhar
             if total_alunos == 0:
                 print("   ⚠️ Método aprimorado não encontrou alunos, tentando método original...")
                 try:
-                    alunos = self._obter_lista_alunos()
+                    alunos = self._obter_lista_alunos(trimestre=trimestre_referencia)
                     total_alunos = len(alunos)
                     if total_alunos > 0:
                         print(f"   ✅ Método original encontrou {total_alunos} alunos")
@@ -1894,7 +1894,7 @@ class SGNAutomation:
             print(f"\n   🔍 DEBUG: mapeamentos['colunas'] = {mapeamentos['colunas']}")
 
             # Obter lista de alunos COM preview das notas
-            alunos = self._obter_lista_alunos(mapa_colunas=mapeamentos["colunas"])
+            alunos = self._obter_lista_alunos(mapa_colunas=mapeamentos["colunas"], trimestre=trimestre_referencia)
             total_alunos = len(alunos)
             if total_alunos == 0:
                 return False, "Nenhum aluno encontrado na tabela"
@@ -2014,7 +2014,7 @@ class SGNAutomation:
             print(f"\n   🔍 DEBUG: mapeamentos['colunas'] = {mapeamentos['colunas']}")
 
             # Obter lista de alunos COM preview das notas
-            alunos = self._obter_lista_alunos(mapa_colunas=mapeamentos["colunas"])
+            alunos = self._obter_lista_alunos(mapa_colunas=mapeamentos["colunas"], trimestre=trimestre_referencia)
             total_alunos = len(alunos)
             if total_alunos == 0:
                 return False, "Nenhum aluno encontrado na tabela"
@@ -2096,7 +2096,7 @@ class SGNAutomation:
             traceback.print_exc()
             return False, erro
     
-    def _obter_lista_alunos(self, mapa_colunas=None):
+    def _obter_lista_alunos(self, mapa_colunas=None, trimestre=None):
         """
         Obtém a lista de todos os alunos na tabela de conceitos
         Versão aprimorada baseada na estrutura HTML real do SGN
@@ -2104,6 +2104,7 @@ class SGNAutomation:
         Args:
             mapa_colunas (dict, optional): Mapeamento de colunas de avaliações
                                            Se fornecido, coleta as notas junto
+            trimestre (str, optional): Trimestre para a requisição HTTP (TR1, TR2, TR3)
         
         Returns:
             list: Lista de dicionários com informações dos alunos
@@ -2129,7 +2130,9 @@ class SGNAutomation:
                     print("   🌐 Iniciando método via requisição HTTP...")
                     start_time = time.time()
                     
-                    alunos_sgn = self.helpers._obter_lista_alunos_via_requisicao()
+                    # Passar trimestre se disponível (padrão TR1)
+                    trimestre_param = trimestre if trimestre else "TR1"
+                    alunos_sgn = self.helpers._obter_lista_alunos_via_requisicao(trimestre=trimestre_param)
                     
                     elapsed_time = time.time() - start_time
                     print(f"   ⏱️ DEBUG: Método HTTP levou {elapsed_time:.2f} segundos")
@@ -5135,7 +5138,7 @@ class SGNAutomation:
         
         try:
             # Usar mesma lógica de _obter_lista_alunos que funciona
-            alunos = self._obter_lista_alunos()
+            alunos = self._obter_lista_alunos(trimestre=trimestre_referencia)
             total_alunos = len(alunos)
             
             if total_alunos == 0:

@@ -1396,10 +1396,15 @@ class SGNAutomationHelpers:
             print(f"   ❌ Erro ao aguardar carregamento: {e}")
             return False
     
-    def _obter_lista_alunos_via_requisicao(self):
+    def _obter_lista_alunos_via_requisicao(self, trimestre="TR1"):
         """
         Obtém lista de alunos fazendo requisição HTTP direta ao servidor
-        Baseado na análise das requisições capturadas
+        
+        Baseado no HAR capturado: a requisição correta é selecionar o trimestre
+        no dropdown mediasConceito, que retorna a tabela com os alunos.
+        
+        Args:
+            trimestre: Trimestre a selecionar (TR1, TR2, TR3) - padrão TR1
         
         Returns:
             list: Lista de dicionários com informações dos alunos
@@ -1430,20 +1435,33 @@ class SGNAutomationHelpers:
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
                 'Faces-Request': 'partial/ajax',
-                'User-Agent': driver.execute_script("return navigator.userAgent;")
+                'User-Agent': driver.execute_script("return navigator.userAgent;"),
+                'Referer': driver.current_url,
+                'Origin': 'https://sgn.sesisenai.org.br'
             }
             
-            # Dados do POST baseados na requisição capturada
+            # Mapear trimestre para valor do select (1=TR1, 2=TR2, 3=TR3)
+            trimestre_map = {'TR1': '1', 'TR2': '2', 'TR3': '3'}
+            trimestre_valor = trimestre_map.get(trimestre.upper(), '1')
+            
+            # Payload CORRETO baseado no HAR capturado:
+            # A requisição é selecionar o trimestre no dropdown mediasConceito
+            # Isso retorna a tabela completa com os alunos
+            element_id = "tabViewDiarioClasse:formAbaConceitos:mediasConceito"
+            
             post_data = {
                 'javax.faces.partial.ajax': 'true',
-                'javax.faces.source': 'tabViewDiarioClasse:formAbaConceitos:j_idt1191',
-                'javax.faces.partial.execute': 'tabViewDiarioClasse:formAbaConceitos:j_idt1191',
-                'javax.faces.partial.render': 'tabViewDiarioClasse:formAbaConceitos:dataTableConceitos',
-                'tabViewDiarioClasse:formAbaConceitos:j_idt1191': 'tabViewDiarioClasse:formAbaConceitos:j_idt1191',
+                'javax.faces.source': element_id,
+                'javax.faces.partial.execute': element_id,
+                'javax.faces.partial.render': 'tabViewDiarioClasse:formAbaConceitos:tabelaConceitos tabViewDiarioClasse:formAbaConceitos:panelAvisoMediaReferenciaSemHabilidadesOuAtitudes',
+                'javax.faces.behavior.event': 'valueChange',
+                'javax.faces.partial.event': 'change',
+                f'{element_id}_focus': '',
+                f'{element_id}_input': trimestre_valor,
                 'javax.faces.ViewState': viewstate
             }
             
-            print("   🚀 Fazendo requisição AJAX...")
+            print(f"   🚀 Fazendo requisição AJAX (selecionando {trimestre})...")
             
             # Fazer requisição usando requests
             import requests
