@@ -125,6 +125,16 @@ class SeleniumManager:
             except Exception as e:
                 print(f"⚠️ Erro ao fechar driver: {e}")
     
+    def _is_session_valid(self):
+        """Verifica se a sessão do driver ainda é válida"""
+        if self.driver is None:
+            return False
+        try:
+            _ = self.driver.current_url
+            return True
+        except Exception:
+            return False
+    
     def get_driver(self):
         """
         Retorna o driver atual ou cria um novo se não existir
@@ -132,6 +142,7 @@ class SeleniumManager:
         Este método implementa o padrão Lazy Loading:
         - Se já existe um driver, retorna ele
         - Se não existe, cria um novo driver e retorna
+        - Se a sessão foi invalidada (navegador fechado), recria o driver
         
         Returns:
             webdriver.Chrome: Instância do driver do Chrome
@@ -142,4 +153,11 @@ class SeleniumManager:
         """
         if self.driver is None:
             return self.setup_driver()
+        
+        # Verificar se a sessão ainda é válida (navegador não foi fechado)
+        if not self._is_session_valid():
+            print("⚠️ Sessão do navegador inválida. Recriando driver...")
+            self.driver = None
+            return self.setup_driver()
+        
         return self.driver

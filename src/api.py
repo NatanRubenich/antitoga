@@ -88,6 +88,37 @@ class LogStreamer:
 selenium_manager = SeleniumManager()
 sgn_automation = SGNAutomation(selenium_manager)
 
+def reiniciar_browser():
+    """
+    Fecha o browser atual e abre um novo para garantir sessão limpa.
+    Chamado no início de cada requisição.
+    """
+    print("🔄 Reiniciando browser para nova requisição...")
+    try:
+        selenium_manager.close_driver()
+    except Exception as e:
+        print(f"⚠️ Aviso ao fechar driver: {e}")
+    
+    # Limpar caches do helpers
+    if hasattr(sgn_automation, 'helpers') and sgn_automation.helpers:
+        sgn_automation.helpers._cached_cookies = None
+        sgn_automation.helpers._cached_headers = None
+        sgn_automation.helpers._cached_url = None
+        sgn_automation.helpers._cache_timestamp = 0
+        sgn_automation.helpers._cache_total_atitudes = None
+        sgn_automation.helpers._cache_total_conceitos = None
+        sgn_automation.helpers._cache_contadores_timestamp = 0
+        sgn_automation.helpers._cache_capacidades_expandidas = False
+        sgn_automation.helpers._cache_estrutura_capacidades = None
+    
+    # Forçar criação de novo driver
+    new_driver = selenium_manager.get_driver()
+    sgn_automation.driver = new_driver
+    if hasattr(sgn_automation, 'helpers') and sgn_automation.helpers:
+        sgn_automation.helpers.driver = new_driver
+    
+    print("✅ Novo browser iniciado com sessão limpa")
+
 def create_app():
     """
     Cria e configura a aplicação FastAPI com o endpoint principal
@@ -218,6 +249,9 @@ def create_app():
         sys.stdout = TeeOutput(original_stdout, log_capture)
         
         try:
+            # Reiniciar browser para sessão limpa
+            reiniciar_browser()
+            
             # Log da requisição recebida (sem a senha por segurança)
             request_dict = request.dict()
             if 'password' in request_dict:
@@ -352,6 +386,9 @@ def create_app():
         sys.stdout = TeeOutput(original_stdout, log_capture)
         
         try:
+            # Reiniciar browser para sessão limpa
+            reiniciar_browser()
+            
             request_dict = request.dict()
             if 'password' in request_dict:
                 request_dict['password'] = '***'
@@ -440,6 +477,9 @@ def create_app():
             def run_automation():
                 nonlocal result
                 try:
+                    # Reiniciar browser para sessão limpa
+                    reiniciar_browser()
+                    
                     # Normalizar flag vinda da query (robusto a diferentes formatos)
                     flag_str = str(trocar_c_por_ne).strip().lower()
                     trocar_flag = flag_str in ("true", "1", "yes", "on")
@@ -504,6 +544,9 @@ def create_app():
             def run_automation():
                 nonlocal result
                 try:
+                    # Reiniciar browser para sessão limpa
+                    reiniciar_browser()
+                    
                     print("\n" + "="*80)
                     print(" 📝 NOVA REQUISIÇÃO - PARECERES (STREAM)")
                     print("-"*80)
@@ -610,6 +653,9 @@ def create_app():
         sys.stdout = TeeOutput(original_stdout, log_capture)
         
         try:
+            # Reiniciar browser para sessão limpa
+            reiniciar_browser()
+            
             print("\n" + "="*80)
             print(" 🆕 NOVA REQUISIÇÃO - MODO INTELIGENTE COM RA")
             print("-"*80)
@@ -730,6 +776,9 @@ def create_app():
         sys.stdout = TeeOutput(original_stdout, log_capture)
         
         try:
+            # Reiniciar browser para sessão limpa
+            reiniciar_browser()
+            
             request_dict = request.dict()
             if 'password' in request_dict:
                 request_dict['password'] = '***'
