@@ -1966,6 +1966,7 @@ class SGNAutomation:
                                 "nome": aluno["nome"],
                                 "linha": aluno["linha"],
                                 "data_ri": aluno["data_ri"],
+                                "ja_preenchido": aluno.get("ja_preenchido", False),  # PRESERVAR status de preenchido
                                 "linha_xpath": f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{aluno['data_ri']}']",
                                 "xpath_aba_notas": f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{aluno['data_ri']}']/td[2]/a[contains(@id,'linkEditarAtitudes')]"
                             }
@@ -2013,6 +2014,7 @@ class SGNAutomation:
                                     "nome": aluno["nome"],
                                     "linha": aluno["linha"],
                                     "data_ri": aluno["data_ri"],
+                                    "ja_preenchido": aluno.get("ja_preenchido", False),  # PRESERVAR status de preenchido
                                     "linha_xpath": f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{aluno['data_ri']}']",
                                     "xpath_aba_notas": f"//tbody[@id='tabViewDiarioClasse:formAbaConceitos:dataTableConceitos_data']/tr[@data-ri='{aluno['data_ri']}']/td[2]/a[contains(@id,'linkEditarAtitudes')]"
                                 }

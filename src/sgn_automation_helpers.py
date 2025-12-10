@@ -1542,6 +1542,7 @@ class SGNAutomationHelpers:
             print(f"   📊 {len(linhas_encontradas)} linhas encontradas no XML")
             
             # Processar cada linha
+            alunos_preenchidos = 0
             for i, (data_ri, linha_html) in enumerate(linhas_encontradas):
                 try:
                     # Extrair nome da linha
@@ -1553,10 +1554,26 @@ class SGNAutomationHelpers:
                         if self._validar_nome_aluno(nome_aluno):
                             # Buscar botão de atitudes
                             botao_atitudes = None
+                            ja_preenchido = False
+                            
                             if 'linkEditarAtitudes' in linha_html:
                                 botao_match = re.search(r'id="([^"]*linkEditarAtitudes[^"]*)"', linha_html)
                                 if botao_match:
                                     botao_atitudes = botao_match.group(1)
+                                
+                                # DETECTAR SE JÁ FOI PREENCHIDO:
+                                # Lápis verde tem style="color:#00b900" e title="Habilidades/Atitudes (Preenchido)"
+                                # Lápis normal tem style="" e title="Habilidades/Atitudes "
+                                # Buscar o link completo do botão de atitudes
+                                link_pattern = rf'<a[^>]*id="{re.escape(botao_atitudes)}"[^>]*>'
+                                link_match = re.search(link_pattern, linha_html)
+                                
+                                if link_match:
+                                    link_html = link_match.group(0)
+                                    # Verificar se está preenchido (cor verde ou título com "Preenchido")
+                                    if 'color:#00b900' in link_html or '(Preenchido)' in link_html:
+                                        ja_preenchido = True
+                                        alunos_preenchidos += 1
                             
                             aluno_info = {
                                 "nome": nome_aluno,
@@ -1565,19 +1582,24 @@ class SGNAutomationHelpers:
                                 "seletores": {
                                     "botao_atitudes": f"#{botao_atitudes}" if botao_atitudes else None
                                 },
-                                "xml_source": True  # Indicar que veio do XML
+                                "xml_source": True,  # Indicar que veio do XML
+                                "ja_preenchido": ja_preenchido  # NOVO: indica se já foi preenchido
                             }
                             
                             alunos.append(aluno_info)
                             
                             if i < 5:  # Debug apenas primeiros 5
-                                print(f"   ✅ Aluno {i+1}: {nome_aluno} (data-ri={data_ri})")
+                                status = "✅ PREENCHIDO" if ja_preenchido else "⏳ Pendente"
+                                print(f"   {status} Aluno {i+1}: {nome_aluno} (data-ri={data_ri})")
                 
                 except Exception as e:
                     print(f"   ⚠️ Erro ao processar linha {i+1}: {e}")
                     continue
             
             print(f"   ✅ {len(alunos)} alunos extraídos com sucesso do XML")
+            if alunos_preenchidos > 0:
+                print(f"   📊 {alunos_preenchidos} alunos já preenchidos (lápis verde)")
+                print(f"   📊 {len(alunos) - alunos_preenchidos} alunos pendentes")
             return alunos
             
         except Exception as e:
@@ -2580,7 +2602,7 @@ class SGNAutomationHelpers:
         except Exception as e:
             return False, f"Erro: {e}", viewstate
     
-    def _lancar_conceitos_todos_alunos_http_puro(self, lista_alunos, atitude_valor, conceito_valor, timeout=30):
+    def _lancar_conceitos_todos_alunos_http_puro(self, lista_alunos, atitude_valor, conceito_valor, timeout=30, pular_preenchidos=True):
         """
         Lança conceitos para todos os alunos usando 100% HTTP.
         
@@ -2589,18 +2611,62 @@ class SGNAutomationHelpers:
             atitude_valor (str): Valor da atitude
             conceito_valor (str): Valor do conceito
             timeout (int): Timeout por requisição
+            pular_preenchidos (bool): Se True, pula alunos já preenchidos (lápis verde)
             
         Returns:
             tuple: (alunos_processados: int, alunos_com_erro: int, mensagens: list)
         """
-        print(f"\n🚀 Iniciando lançamento HTTP puro para {len(lista_alunos)} alunos...")
+        # Converter Enum para string se necessário
+        if hasattr(atitude_valor, 'value'):
+            atitude_valor = str(atitude_valor.value)
+        elif hasattr(atitude_valor, 'name'):
+            # Converter nome do enum para valor legível
+            atitude_valor = str(atitude_valor.name).replace('_', ' ').title()
+            if 'As Vezes' in atitude_valor:
+                atitude_valor = 'Às vezes'
+        else:
+            atitude_valor = str(atitude_valor)
+        
+        if hasattr(conceito_valor, 'value'):
+            conceito_valor = str(conceito_valor.value)
+        elif hasattr(conceito_valor, 'name'):
+            conceito_valor = str(conceito_valor.name)
+        else:
+            conceito_valor = str(conceito_valor)
+        
+        # Separar alunos já preenchidos dos pendentes
+        alunos_preenchidos = [a for a in lista_alunos if a.get('ja_preenchido', False)]
+        alunos_pendentes = [a for a in lista_alunos if not a.get('ja_preenchido', False)]
+        
+        print(f"\n🚀 Iniciando lançamento HTTP puro...")
+        print(f"   📊 Total de alunos: {len(lista_alunos)}")
+        print(f"   ✅ Já preenchidos (lápis verde): {len(alunos_preenchidos)}")
+        print(f"   ⏳ Pendentes: {len(alunos_pendentes)}")
         print(f"   📋 Atitude: '{atitude_valor}' | Conceito: '{conceito_valor}'")
         print(f"   ⏱️ Timeout por requisição: {timeout}s")
+        
+        # Se pular_preenchidos=True, processar apenas pendentes
+        if pular_preenchidos and len(alunos_preenchidos) > 0:
+            print(f"\n   ⏭️ Pulando {len(alunos_preenchidos)} alunos já preenchidos:")
+            for aluno in alunos_preenchidos[:5]:  # Mostrar apenas os 5 primeiros
+                print(f"      - {aluno.get('nome', 'Desconhecido')}")
+            if len(alunos_preenchidos) > 5:
+                print(f"      ... e mais {len(alunos_preenchidos) - 5} alunos")
+            
+            lista_para_processar = alunos_pendentes
+        else:
+            lista_para_processar = lista_alunos
+        
+        if len(lista_para_processar) == 0:
+            print(f"\n   ✅ Todos os alunos já estão preenchidos! Nada a fazer.")
+            return len(alunos_preenchidos), 0, ["Todos os alunos já preenchidos"]
+        
+        print(f"\n   🎯 Processando {len(lista_para_processar)} alunos pendentes...")
         
         # Obter ViewState inicial
         viewstate = self._obter_viewstate_atual()
         if not viewstate:
-            return 0, len(lista_alunos), ["Falha ao obter ViewState inicial"]
+            return 0, len(lista_para_processar), ["Falha ao obter ViewState inicial"]
         
         alunos_processados = 0
         alunos_com_erro = 0
@@ -2608,11 +2674,11 @@ class SGNAutomationHelpers:
         
         inicio = time.time()
         
-        for idx, aluno in enumerate(lista_alunos):
+        for idx, aluno in enumerate(lista_para_processar):
             data_ri = aluno.get('data_ri', idx)
             nome = aluno.get('nome', f'Aluno {idx}')
             
-            print(f"\n   [{idx + 1}/{len(lista_alunos)}] Processando: {nome[:30]}...")
+            print(f"\n   [{idx + 1}/{len(lista_para_processar)}] Processando: {nome[:30]}...")
             
             sucesso, mensagem, viewstate = self._lancar_conceitos_aluno_http_puro(
                 data_ri, atitude_valor, conceito_valor, viewstate, timeout
@@ -2628,11 +2694,14 @@ class SGNAutomationHelpers:
             mensagens.append(mensagem)
         
         tempo_total = time.time() - inicio
-        tempo_por_aluno = tempo_total / max(1, len(lista_alunos))
+        tempo_por_aluno = tempo_total / max(1, len(lista_para_processar))
         
         print(f"\n📊 Resumo do lançamento HTTP puro:")
-        print(f"   ✅ Processados: {alunos_processados}/{len(lista_alunos)}")
+        print(f"   ✅ Processados: {alunos_processados}/{len(lista_para_processar)} pendentes")
+        print(f"   ⏭️ Pulados (já preenchidos): {len(alunos_preenchidos)}")
         print(f"   ❌ Com erro: {alunos_com_erro}")
         print(f"   ⏱️ Tempo total: {tempo_total:.1f}s ({tempo_por_aluno:.1f}s/aluno)")
         
-        return alunos_processados, alunos_com_erro, mensagens
+        # Retornar total incluindo os já preenchidos como "processados"
+        total_processados = alunos_processados + len(alunos_preenchidos)
+        return total_processados, alunos_com_erro, mensagens
